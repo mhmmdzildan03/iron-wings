@@ -6,7 +6,7 @@
 // stick that leans with your hand. No digital HUD — the only lettering is
 // stencilled placards and a chalked mission note, as a real panel would have.
 
-import { PHASE, RING_COURSE, RING_RADIUS, HOME_Z, STRIP, KILLS_TO_CLEAR, clamp, mph, feet } from './flight.js';
+import { PHASE, RING_COURSE, RING_RADIUS, HOME_Z, STRIP, KILLS_TO_CLEAR, clamp, knots, feet } from './flight.js';
 
 export const CAMERA = { COCKPIT: 'cockpit', CHASE: 'chase' };
 
@@ -63,11 +63,22 @@ export function createRenderer(container) {
   const plate2Text = mkText(17, { fill: 0xd8c491, stroke: 0x1c1206, strokeThickness: 3 });
   plate2Text.position.set(18, 66);
   // Objective marker lettering, pinned over the ring / strip / bandit ahead.
-  const markerText = mkText(19, { fill: 0xffc93c, stroke: 0x2a1c08, strokeThickness: 4, fontWeight: 'bold' });
+  const markerText = mkText(19, { fill: 0x8affb0, stroke: 0x0a2013, strokeThickness: 4, fontWeight: 'bold' });
   markerText.anchor.set(0.5, 1);
-  const valSpeed = mkText(17, { fill: 0xffe9b0 }); valSpeed.anchor.set(0.5, 0);
-  const valAlt = mkText(17, { fill: 0xffe9b0 }); valAlt.anchor.set(0.5, 0);
-  const valHdg = mkText(17, { fill: 0xffe9b0 }); valHdg.anchor.set(0.5, 0);
+  // Modern avionics lettering: green phosphor monospace for the HUD and MFDs.
+  const mono = { fontFamily: '"Courier New", monospace', fill: 0x8affb0 };
+  const mkMono = (size, opts = {}) => {
+    const t = new PIXI.Text('', { ...mono, fontSize: size, ...opts });
+    app.stage.addChild(t);
+    return t;
+  };
+  const hudSpdVal = mkMono(21, { fontWeight: 'bold' }); hudSpdVal.anchor.set(0.5);
+  const hudAltVal = mkMono(21, { fontWeight: 'bold' }); hudAltVal.anchor.set(0.5);
+  const hudHdgVal = mkMono(20, { fontWeight: 'bold' }); hudHdgVal.anchor.set(0.5);
+  const hudSys = mkMono(17, {}); hudSys.position.set(18, 688);
+  const warnText = mkMono(24, { fill: 0xff5347, fontWeight: 'bold' }); warnText.anchor.set(0.5); warnText.position.set(CX, 120);
+  const lockText = mkMono(17, { fill: 0xffb03a, fontWeight: 'bold' }); lockText.anchor.set(0.5, 1);
+  const mfdText = mkMono(16, { fill: 0x9fe870, lineHeight: 24 }); mfdText.position.set(762, 570);
   const titleText = mkText(92, { fill: 0xf7d774, stroke: 0x3a2405, strokeThickness: 6, fontWeight: 'bold', letterSpacing: 6 });
   titleText.anchor.set(0.5); titleText.position.set(CX, 208);
   const subText = mkText(30, { fill: 0xfff3cf, letterSpacing: 10 });
@@ -174,6 +185,7 @@ export function createRenderer(container) {
     drawRings(g, state, now);
     for (const e of enemies) drawEnemy(g, state, e, now);
     drawFlak(g, state);
+    drawMissiles(g, state);
     // Speed streaks rushing past the canopy sides, out in the world where
     // they belong — drawn before the cockpit so the frame stays clean.
     if (!state.onGround && state.speed > 40) {
@@ -277,6 +289,27 @@ export function createRenderer(container) {
     }
   }
 
+  /** Live missiles: a white dart with a flame, and its curving smoke road behind it. */
+  function drawMissiles(g, state) {
+    for (const m of state.missilesLive) {
+      for (let i = 0; i < m.trail.length; i += 1) {
+        const tp = m.trail[i];
+        const pp = project(state, tp.x, tp.alt, tp.z);
+        if (!pp) continue;
+        g.beginFill(0xd8d8d8, 0.22 * (1 - i / m.trail.length) + 0.04);
+        g.drawCircle(pp.x, pp.y, 4.5 + i * 0.75);
+        g.endFill();
+      }
+      const p = project(state, m.x, m.alt, m.z);
+      if (!p) continue;
+      const s = clamp(p.scale * 0.3, 0.15, 3.4);
+      g.beginFill(0xff8c3a, 0.9); g.drawCircle(p.x, p.y + 6 * s, 5 * s); g.endFill();
+      g.beginFill(0xf2f5f7, 1);
+      g.drawPolygon([p.x - 3 * s, p.y - 10 * s, p.x + 3 * s, p.y - 10 * s, p.x + 2 * s, p.y + 8 * s, p.x - 2 * s, p.y + 8 * s]);
+      g.endFill();
+    }
+  }
+
   function drawRunwayShape(g, state, relZ, lateral) {
     const near = project(state, lateral, 0, state.z + Math.max(relZ, 30));
     const far = project(state, lateral, 0, state.z + relZ + STRIP.length);
@@ -326,7 +359,7 @@ export function createRenderer(container) {
       if (r < 6 || r > 900) continue;
       const isNext = i === state.ringIndex;
       const pulse = isNext ? 0.75 + Math.sin(now * 4) * 0.25 : 0.4;
-      g.lineStyle(Math.max(3, 9 * p.scale * 0.14), isNext ? 0xffc93c : 0xd9a441, pulse);
+      g.lineStyle(Math.max(3, 9 * p.scale * 0.14), isNext ? 0x8affb0 : 0x4fae72, pulse);
       g.drawCircle(p.x, p.y, r);
       g.lineStyle(Math.max(1, 3 * p.scale * 0.14), 0xfff0b3, pulse * 0.9);
       g.drawCircle(p.x, p.y, r * 0.92);
@@ -344,40 +377,47 @@ export function createRenderer(container) {
     if (!p) return;
     const s = clamp(p.scale * 0.16, 0.12, 2.6);
     const x = p.x, y = p.y;
-    // A wreck spins as it falls: rotate every point of the silhouette around
-    // its centre by an angle that grows with its smoke trail.
+    // A wreck spins as it falls: rotate the silhouette around its centre.
     const spin = e.dead ? e.smoke * 2.6 : Math.sin(now * 2 + e.z) * 0.06;
     const cs = Math.cos(spin), sn = Math.sin(spin);
-    const R = (px, py) => [x + px * cs - py * sn, y + px * sn + py * cs];
+    const R = (px2, py2) => [x + px2 * cs - py2 * sn, y + px2 * sn + py2 * cs];
     const poly = (pts) => { const out = []; for (let i = 0; i < pts.length; i += 2) out.push(...R(pts[i], pts[i + 1])); return out; };
     g.lineStyle(0);
-    // Wing, fuselage, tail — a dark patrol silhouette against the sunset.
-    g.beginFill(e.hitFlash > 0 ? 0xff6b4a : 0x3d4438, 1);
-    g.drawPolygon(poly([-74 * s, 6 * s, 74 * s, 6 * s, 30 * s, -4 * s, -30 * s, -4 * s]));
-    g.drawEllipse(x, y - 2 * s, 46 * s, 11 * s);
-    g.drawPolygon(poly([-8 * s, -8 * s, 10 * s, -26 * s, 20 * s, -8 * s]));
+    // Hostile jet, head-on: swept delta wings, twin fins, a long nose.
+    g.beginFill(e.hitFlash > 0 ? 0xff6b4a : 0x3f464e, 1);
+    g.drawPolygon(poly([-88 * s, 10 * s, -30 * s, -2 * s, 30 * s, -2 * s, 88 * s, 10 * s, 40 * s, 14 * s, -40 * s, 14 * s]));
+    g.drawEllipse(x, y - 2 * s, 40 * s, 10 * s);
+    g.drawPolygon(poly([-26 * s, -6 * s, -18 * s, -24 * s, -10 * s, -6 * s]));
+    g.drawPolygon(poly([26 * s, -6 * s, 18 * s, -24 * s, 10 * s, -6 * s]));
     g.endFill();
-    g.beginFill(0x22281f, 1);
-    g.drawEllipse(x + 6 * s, y - 10 * s, 15 * s, 6 * s); // canopy
+    g.beginFill(0x9fc6dd, 0.9);
+    g.drawEllipse(x, y - 8 * s, 11 * s, 5 * s); // canopy glint
     g.endFill();
-    // Propeller blur and a blunt nose.
-    g.lineStyle(3 * s, 0x14161a, 0.55);
-    g.moveTo(x - 46 * s, y - 16 * s); g.lineTo(x - 46 * s, y + 12 * s);
-    g.lineStyle(0);
+    g.beginFill(0xc23b2a, 1);
+    g.drawCircle(x - 52 * s, y + 8 * s, 3.4 * s); // wing markings
+    g.drawCircle(x + 52 * s, y + 8 * s, 3.4 * s);
+    g.endFill();
     if (e.dead || e.hp < 3) {
       g.beginFill(0x2b2b2b, e.dead ? 0.5 : 0.3);
       g.drawCircle(x + 26 * s, y - 14 * s, (e.dead ? 16 : 8) * s);
       g.drawCircle(x + 40 * s, y - 24 * s, (e.dead ? 22 : 11) * s);
       g.endFill();
     }
+    // The kill moment: a fireball that blooms and sheds debris.
+    if (e.boom > 0) {
+      const br = (1 - e.boom) * 90 * s + 12 * s;
+      g.beginFill(0xff8c3a, 0.55 * e.boom + 0.2); g.drawCircle(x, y, br); g.endFill();
+      g.beginFill(0xffc46b, 0.75 * e.boom + 0.2); g.drawCircle(x, y, br * 0.62); g.endFill();
+      g.beginFill(0xfff3cf, 0.9 * e.boom); g.drawCircle(x, y, br * 0.3); g.endFill();
+      if (Math.random() < 0.6) burst(x, y, 0xff8c3a, 3, 90);
+    }
     if (e.dead) {
-      // Fire in the wreck, breathing as it tumbles down.
       g.beginFill(0xff8c3a, 0.75 + Math.sin(now * 31) * 0.2);
       g.drawCircle(x + 10 * s, y - 6 * s, 7 * s);
       g.endFill();
       if (Math.random() < 0.5) burst(x, y, 0xff8c3a, 2, 60);
     }
-    // Return fire: when her guns flash, two tracer lanes reach past the camera.
+    // Return fire: when her cannon flashes, two tracer lanes reach past the camera.
     if (e.muzzle > 0) {
       g.lineStyle(3, 0xffb066, 0.85);
       g.moveTo(x - 20 * s, y); g.lineTo(x - 90, H + 40);
@@ -398,9 +438,11 @@ export function createRenderer(container) {
    * the ground below. Wing guns throw tracer lanes to the vanishing point.
    */
   function drawOwnPlane(g, state, now) {
+    // STEEL VIPER from behind-above: a modern twin-fin delta jet. Local axes:
+    // nose is -y (away, up-screen), tail +y toward the camera.
     const px = CX - state.roll * 38;
     const py = (state.onGround ? 492 : 428) + state.pitch * 24;
-    const k = 1.35;
+    const k = 1.3;
     const spin = -state.roll * 0.55;
     const cs = Math.cos(spin), sn = Math.sin(spin);
     const R = (lx, ly) => [px + lx * cs - ly * sn, py + lx * sn + ly * cs];
@@ -412,9 +454,36 @@ export function createRenderer(container) {
     g.drawEllipse(px + state.alt * 0.35, 694, 150 * shScale + 30, 15 * shScale + 4);
     g.endFill();
 
+    // Flares: a fan of burning decoys spilling behind the tail, brightest at
+    // release and drifting down as they burn out.
+    if (state.flareT > 0) {
+      const age = 1 - state.flareT;
+      for (let i = 0; i < 12; i += 1) {
+        const spread = (i - 5.5) * (7 + age * 26);
+        const [fxp, fyp] = R(spread, 74 * k + age * 84 + ((i * i) % 7) * 6);
+        const a = clamp(state.flareT, 0, 1);
+        g.beginFill(0xffa63e, a * 0.9); g.drawCircle(fxp, fyp, 6 + age * 3); g.endFill();
+        g.beginFill(0xfff3cf, a); g.drawCircle(fxp, fyp, 2.6); g.endFill();
+      }
+    }
+
+    // Afterburner cones first (they sit behind everything): twin plumes that
+    // flicker longer the harder she burns, blue heart inside orange.
+    if (state.wep) {
+      for (const sgn of [-1, 1]) {
+        const flick = 1 + Math.sin(now * 47 + sgn * 2) * 0.16;
+        const [bx, by] = R(sgn * 9 * k, 70 * k);
+        const [tx, ty] = R(sgn * 9 * k, (70 + 40 * flick) * k);
+        g.lineStyle(15 * k, 0xff7a2e, 0.55); g.moveTo(bx, by); g.lineTo(tx, ty);
+        g.lineStyle(8 * k, 0xffc46b, 0.8); g.moveTo(bx, by); g.lineTo(tx, ty);
+        g.lineStyle(4 * k, 0xbfe0ff, 0.95); g.moveTo(bx, by); g.lineTo(R(sgn * 9 * k, (70 + 30 * flick) * k)[0], R(sgn * 9 * k, (70 + 30 * flick) * k)[1]);
+        g.lineStyle(0);
+      }
+    }
+
     if (state.firing) {
       for (const sgn of [-1, 1]) {
-        const [gx, gy] = R(sgn * 62 * k, -4 * k);
+        const [gx, gy] = R(sgn * 20 * k, -38 * k);
         g.lineStyle(3, 0xffe98a, 0.85);
         g.moveTo(gx, gy); g.lineTo(CX + sgn * 9, 298);
         g.lineStyle(1, 0xffffff, 0.9);
@@ -423,319 +492,301 @@ export function createRenderer(container) {
         g.beginFill(0xffe08a, 1); g.drawCircle(gx, gy, 5); g.endFill();
       }
     }
-    // Tail feathers first, then ONE main wing straight across behind the
-    // fuselage, so the silhouette reads as a single aeroplane.
-    g.beginFill(0x424a33, 1);
-    g.drawPolygon(poly([-52 * k, 52 * k, 52 * k, 52 * k, 42 * k, 64 * k, -42 * k, 64 * k]));
-    g.drawPolygon(poly([-158 * k, -4 * k, 158 * k, -4 * k, 148 * k, 12 * k, -148 * k, 12 * k]));
+
+    // Delta wing: one great swept triangle either side, stabilators at the tail.
+    g.beginFill(0x767f88, 1);
+    g.drawPolygon(poly([-14 * k, -34 * k, -128 * k, 40 * k, -124 * k, 54 * k, -18 * k, 26 * k]));
+    g.drawPolygon(poly([14 * k, -34 * k, 128 * k, 40 * k, 124 * k, 54 * k, 18 * k, 26 * k]));
+    g.drawPolygon(poly([-16 * k, 48 * k, -58 * k, 62 * k, -54 * k, 72 * k, -14 * k, 66 * k]));
+    g.drawPolygon(poly([16 * k, 48 * k, 58 * k, 62 * k, 54 * k, 72 * k, 14 * k, 66 * k]));
     g.endFill();
-    // Wing roundels: a plain ring marking of our own, no one's insignia copied.
+    // Missiles ride the wingtip rails, white with dark fins.
     for (const sgn of [-1, 1]) {
-      const [rx, ry] = R(sgn * 102 * k, 4 * k);
-      g.beginFill(0xd8d3c2, 0.9); g.drawCircle(rx, ry, 9 * k); g.endFill();
-      g.beginFill(0x5a6f9e, 0.95); g.drawCircle(rx, ry, 5.5 * k); g.endFill();
+      if (state.missiles <= 0) break;
+      const [mx, my] = R(sgn * 112 * k, 34 * k);
+      g.beginFill(0xe8ecf0, 1); g.drawEllipse(mx, my, 4.5 * k, 15 * k); g.endFill();
+      g.beginFill(0x3c434a, 1); g.drawPolygon(poly([sgn * 112 * k - 6 * k, 46 * k, sgn * 112 * k + 6 * k, 46 * k, sgn * 112 * k, 52 * k])); g.endFill();
     }
-    // Fuselage: a teardrop — round at the cowling, tapering to the tail.
-    g.beginFill(0x4a5138, 1);
+    // Twin fins, canted slightly outward.
+    g.beginFill(0x69727b, 1);
+    g.drawPolygon(poly([-24 * k, 30 * k, -13 * k, 34 * k, -15 * k, 62 * k, -26 * k, 58 * k]));
+    g.drawPolygon(poly([24 * k, 30 * k, 13 * k, 34 * k, 15 * k, 62 * k, 26 * k, 58 * k]));
+    g.endFill();
+    // Fuselage: a long sleek spine, nose far ahead, intakes flanking it.
+    g.beginFill(0x394047, 1);
+    g.drawPolygon(poly([-19 * k, -8 * k, -15 * k, 22 * k, -19 * k, 24 * k, -19 * k, -6 * k]));
+    g.drawPolygon(poly([19 * k, -8 * k, 15 * k, 22 * k, 19 * k, 24 * k, 19 * k, -6 * k]));
+    g.endFill();
+    g.beginFill(0x9aa4ad, 1);
     g.drawPolygon(poly([
-      0, -72 * k, 16 * k, -58 * k, 24 * k, -30 * k, 25 * k, 0,
-      19 * k, 34 * k, 10 * k, 58 * k, 0, 68 * k,
-      -10 * k, 58 * k, -19 * k, 34 * k, -25 * k, 0, -24 * k, -30 * k, -16 * k, -58 * k,
+      0, -98 * k, 9 * k, -70 * k, 15 * k, -34 * k, 16 * k, 6 * k,
+      13 * k, 44 * k, 7 * k, 66 * k, 0, 70 * k,
+      -7 * k, 66 * k, -13 * k, 44 * k, -16 * k, 6 * k, -15 * k, -34 * k, -9 * k, -70 * k,
     ]));
     g.endFill();
-    g.beginFill(0x59634a, 0.8);
-    g.drawEllipse(px, py - 8 * k, 6.5 * k, 44 * k);
+    g.beginFill(0xb4bec6, 0.85);
+    g.drawEllipse(px, py - 16 * k, 5.5 * k, 46 * k);
     g.endFill();
-    // Canopy: a modest teardrop of slate glass, well forward.
-    const [cxp, cyp] = R(0, -30 * k);
-    g.beginFill(0x5d7684, 1); g.drawEllipse(cxp, cyp, 9.5 * k, 15 * k); g.endFill();
-    g.beginFill(0xcfe2ea, 0.85); g.drawEllipse(cxp - 2.5 * k, cyp - 4 * k, 3.5 * k, 6.5 * k); g.endFill();
-    // Propeller: a pale blurred band at the nose, strobing with rpm.
-    const [nx, ny] = R(0, -76 * k);
-    g.lineStyle(8, 0x22201c, 0.3 + state.throttle * 0.22);
-    g.moveTo(nx - 36 * k, ny); g.lineTo(nx + 36 * k, ny);
-    g.lineStyle(0);
-    g.beginFill(0x2c2a24, 1); g.drawCircle(nx, ny, 4.5 * k); g.endFill();
-    // WEP exhausts breathe blue flame either side of the cowling.
-    if (state.wep) {
-      for (const sgn of [-1, 1]) {
-        const [ex, ey] = R(sgn * 15 * k, -52 * k);
-        g.beginFill(0x7fb2ff, 0.75); g.drawEllipse(ex, ey, 4 * k, 9 * k); g.endFill();
-      }
+    // Bubble canopy, smoked glass with a sunset streak.
+    const [cxp, cyp] = R(0, -52 * k);
+    g.beginFill(0x2c3e50, 1); g.drawEllipse(cxp, cyp, 8.5 * k, 16 * k); g.endFill();
+    g.beginFill(0x9fc6dd, 0.8); g.drawEllipse(cxp - 2 * k, cyp - 5 * k, 3 * k, 7 * k); g.endFill();
+    // Twin nozzles, dark rings at the tail.
+    for (const sgn of [-1, 1]) {
+      const [nx2, ny2] = R(sgn * 9 * k, 69 * k);
+      g.beginFill(0x22262a, 1); g.drawCircle(nx2, ny2, 6.5 * k); g.endFill();
+      g.beginFill(0x4d565e, 1); g.drawCircle(nx2, ny2, 3.5 * k); g.endFill();
     }
-    // A shot-up engine trails smoke behind her.
+    // A shot-up jet trails smoke behind her.
     if (state.hull < 70 && !state.onGround && Math.random() < 0.4) {
       burst(px + (Math.random() - 0.5) * 20, py + 60, state.hull < 35 ? 0x2b2b2b : 0x6a6a6a, 2, 26);
     }
     void now;
   }
 
+
+  // ------------------------------------------------------- modern avionics
+  const HUD_GREEN = 0x8affb0;
+
   /**
-   * The chase view's furniture: just a low leather ledge along the bottom —
-   * the gauges float over the world the way a bush pilot's panel-top
-   * instruments do, so the scenery (and a runway on final) stays visible.
+   * The projected HUD, identical in both cameras: velocity tape left,
+   * altitude tape right, heading strip across the top, a pitch ladder that
+   * rolls with the jet, the aiming reticle, and — when the seeker works —
+   * the lock diamond over its bandit, growing its arc until it burns red.
    */
-  function drawChaseStrip(g, state, now) {
-    g.beginFill(0x26241f, 0.96);
-    g.drawPolygon([0, H, 0, 676, W, 676, W, H]);
-    g.endFill();
-    g.lineStyle(7, 0x6d4a2f, 1);
-    g.moveTo(0, 678); g.lineTo(W, 678);
+  function drawHUD(g, state, enemies, now) {
+    const ox = (Math.random() - 0.5) * state.shake * 7;
+    const oy = (Math.random() - 0.5) * state.shake * 7;
+    g.lineStyle(2, HUD_GREEN, 0.85);
+
+    // Velocity tape (knots) on the left.
+    const kt = knots(state.speed);
+    g.drawRect(96 + ox, 196 + oy, 64, 236);
+    for (let d = -40; d <= 40; d += 10) {
+      const v = Math.round((kt + d) / 10) * 10;
+      if (v < 0) continue;
+      const ty = 314 + oy + (kt - v) * 1.55;
+      if (ty < 204 + oy || ty > 424 + oy) continue;
+      g.moveTo(132 + ox, ty); g.lineTo(150 + ox, ty);
+    }
+    hudSpdVal.text = `${kt}`;
+    hudSpdVal.position.set(128 + ox, 314 + oy);
+    g.drawRect(96 + ox, 296 + oy, 64, 36);
+
+    // Altitude tape (feet) on the right.
+    const ft = feet(state.alt);
+    g.drawRect(1120 + ox, 196 + oy, 64, 236);
+    for (let d = -200; d <= 200; d += 50) {
+      const v = Math.round((ft + d) / 50) * 50;
+      if (v < 0) continue;
+      const ty = 314 + oy + (ft - v) * 0.55;
+      if (ty < 204 + oy || ty > 424 + oy) continue;
+      g.moveTo(1130 + ox, ty); g.lineTo(1148 + ox, ty);
+    }
+    hudAltVal.text = `${ft}`;
+    hudAltVal.position.set(1152 + ox, 314 + oy);
+    g.drawRect(1120 + ox, 296 + oy, 64, 36);
+
+    // Heading strip across the top.
+    g.drawRect(490 + ox, 64 + oy, 300, 34);
+    for (let d = -30; d <= 30; d += 5) {
+      const h = ((Math.round((state.heading + d) / 5) * 5) % 360 + 360) % 360;
+      const tx = 640 + ox + (state.heading - (state.heading + d)) * -2.4 + (d * 2.4) * 0 + ((Math.round((state.heading + d) / 5) * 5 - (state.heading + d)) * 2.4);
+      void tx;
+      const px2 = 640 + ox + ((Math.round((state.heading + d) / 5) * 5 - state.heading) * 2.4);
+      if (px2 < 496 + ox || px2 > 784 + ox) continue;
+      g.moveTo(px2, 88 + oy); g.lineTo(px2, 96 + oy);
+      void h;
+    }
+    hudHdgVal.text = `${String(((Math.round(state.heading) % 360) + 360) % 360).padStart(3, '0')}°`;
+    hudHdgVal.position.set(640 + ox, 116 + oy);
+
+    // Pitch ladder: bars that sink and roll with the nose.
+    const ladA = -state.roll * 0.9;
+    const lc = Math.cos(ladA), ls = Math.sin(ladA);
+    for (const deg of [-20, -10, 10, 20]) {
+      const off = (deg / 10) * 26 - state.pitch * 130;
+      if (Math.abs(off) > 130) continue;
+      const cxp = 640 + ox - Math.sin(ladA) * off * 0 + (-ls) * off;
+      const cyp = 300 + oy + lc * off;
+      const hx = lc * (deg > 0 ? 74 : 58), hy = ls * (deg > 0 ? 74 : 58);
+      g.moveTo(cxp - hx, cyp - hy); g.lineTo(cxp - hx * 0.35, cyp - hy * 0.35);
+      g.moveTo(cxp + hx * 0.35, cyp + hy * 0.35); g.lineTo(cxp + hx, cyp + hy);
+      if (deg < 0) { g.moveTo(cxp - hx, cyp - hy); g.lineTo(cxp - hx, cyp - hy + 8); g.moveTo(cxp + hx, cyp + hy); g.lineTo(cxp + hx, cyp + hy + 8); }
+    }
+
+    // The aiming reticle: a calm green circle that warms as the seeker works.
+    const lockCol = state.locked ? 0xff5347 : (state.lockProgress > 0.05 ? 0xffb03a : HUD_GREEN);
+    g.lineStyle(2.5, lockCol, 0.95);
+    g.drawCircle(640 + ox, 300 + oy, 27);
+    g.moveTo(640 + ox - 40, 300 + oy); g.lineTo(640 + ox - 27, 300 + oy);
+    g.moveTo(640 + ox + 27, 300 + oy); g.lineTo(640 + ox + 40, 300 + oy);
+    g.moveTo(640 + ox, 300 + oy - 40); g.lineTo(640 + ox, 300 + oy - 27);
+    g.beginFill(lockCol, 1); g.drawCircle(640 + ox, 300 + oy, 2.6); g.endFill();
     g.lineStyle(0);
-    drawGauges(g, state, 0, 0);
-    void now;
+
+    // The lock diamond rides its bandit, its arc filling toward LOCK.
+    const tgt = state.lockTarget;
+    if (tgt && !tgt.dead && state.phase === PHASE.DOGFIGHT) {
+      const tp = project(state, tgt.x, tgt.alt, tgt.z);
+      if (tp) {
+        const s2 = 30;
+        g.lineStyle(2.5, lockCol, 0.95);
+        g.drawPolygon([tp.x, tp.y - s2, tp.x + s2, tp.y, tp.x, tp.y + s2, tp.x - s2, tp.y]);
+        if (!state.locked) g.arc(tp.x, tp.y, s2 + 9, -Math.PI / 2, -Math.PI / 2 + state.lockProgress * Math.PI * 2);
+        g.lineStyle(0);
+        lockText.visible = true;
+        lockText.text = state.locked ? 'LOCK — FOX TWO (F)' : 'TRACKING…';
+        lockText.style.fill = state.locked ? 0xff5347 : 0xffb03a;
+        lockText.position.set(tp.x, tp.y - s2 - 14);
+      } else lockText.visible = false;
+    } else lockText.visible = false;
+
+    // Stores and burner status, bottom-left phosphor line.
+    hudSys.visible = true;
+    hudSys.text = `MSL ${state.missiles}   FLR ${state.flares}   AB ${state.wep ? 'ON' : 'OFF'}   GUN ${state.gunHeat > 0.92 ? 'HOT' : 'RDY'}`;
+    hudSys.style.fill = state.wep ? 0xffb03a : 0x8affb0;
+
+    // RWR: the inbound warning owns the top of the glass while it lives.
+    if (state.inbound) {
+      warnText.visible = Math.floor(now * 2.4) % 2 === 0;
+      warnText.text = '⚠ MISSILE INBOUND — FLARES (X) ⚠';
+      g.lineStyle(5, 0xff5347, warnText.visible ? 0.8 : 0.25);
+      g.drawRect(10, 10, W - 20, H - 20);
+      g.lineStyle(0);
+    } else warnText.visible = false;
   }
 
-  // -------------------------------------------------------------- cockpit
-  function rivets(g, points) {
-    g.beginFill(0x8f8a7c, 1);
-    for (const [x, y] of points) g.drawCircle(x, y, 3);
+  /**
+   * The cockpit itself, modernised: slim canopy bows in dark composite, and
+   * a low panel carrying two live MFDs — a sweeping radar scope with the
+   * bandits on it, and a systems page with hull, fuel, stores and burner.
+   */
+  function drawPanel(g, state, enemies, now) {
+    const ox = (Math.random() - 0.5) * state.shake * 6;
+    const oy = (Math.random() - 0.5) * state.shake * 6;
+    // Canopy bows.
+    g.beginFill(0x23272c, 1);
+    g.drawPolygon([0, 0, 150 + ox, 0, 215 + ox, 720, 60, 720]);
+    g.drawPolygon([W, 0, 1130 + ox, 0, 1065 + ox, 720, 1220, 720]);
+    g.drawPolygon([0, 0, W, 0, W, 34, 0, 40]);
     g.endFill();
-    g.beginFill(0x2c2a24, 1);
-    for (const [x, y] of points) g.drawCircle(x + 1, y + 1, 1.2);
+    g.beginFill(0x31363d, 1);
+    g.drawPolygon([560 + ox, 0, 720 + ox, 0, 706 + ox, 52, 574 + ox, 52]);
     g.endFill();
-  }
-
-  function drawCockpit(g, state, now) {
-    const shakeX = state.shake > 0 ? (Math.random() - 0.5) * state.shake * 7 : 0;
-    const shakeY = state.shake > 0 ? (Math.random() - 0.5) * state.shake * 5 : 0;
-    const lean = -state.roll * 16;
-    const ox = shakeX + lean * 0.3, oy = shakeY;
-
-    // Canopy frame: slim raked pillars, side posts and a top rail, olive metal.
-    g.beginFill(0x3a3d33, 1);
-    g.drawPolygon([118 + ox, 0, 172 + ox, 0, 330 + ox, 500 + oy, 262 + ox, 516 + oy]);
-    g.drawPolygon([W - 118 + ox, 0, W - 172 + ox, 0, W - 330 + ox, 500 + oy, W - 262 + ox, 516 + oy]);
-    g.drawRect(0, 0, 40, H);
-    g.drawRect(W - 40, 0, 40, H);
-    g.drawRect(0, 0, W, 30);
+    // Panel slab and the two screens.
+    g.beginFill(0x14181d, 1);
+    g.drawPolygon([0, 720, 0, 560, 250 + ox, 542, 1030 + ox, 542, W, 560, W, 720]);
     g.endFill();
-    g.beginFill(0x2e3029, 1);
-    g.drawPolygon([172 + ox, 0, 196 + ox, 0, 344 + ox, 498 + oy, 330 + ox, 500 + oy]);
-    g.drawPolygon([W - 172 + ox, 0, W - 196 + ox, 0, W - 344 + ox, 498 + oy, W - 330 + ox, 500 + oy]);
-    g.endFill();
-    // Leather padding along the cockpit rim.
-    g.lineStyle(13, 0x6d4a2f, 1);
-    g.moveTo(196 + ox, 512 + oy);
-    g.bezierCurveTo(420 + ox, 452 + oy, 860 + ox, 452 + oy, 1084 + ox, 512 + oy);
+    g.lineStyle(2, 0x3d454e, 1);
+    g.drawRect(292, 556, 250, 150);
+    g.drawRect(738, 556, 250, 150);
     g.lineStyle(0);
-    // Rear-view mirror on the top rail.
-    g.beginFill(0x22241f, 1); g.drawRoundedRect(CX - 52 + ox, 32, 104, 34, 6); g.endFill();
-    g.beginFill(0x9fc4d4, 0.75); g.drawRoundedRect(CX - 47 + ox, 36, 94, 26, 4); g.endFill();
-
-    // Main panel: a shallow arc of dark metal across the bottom of the view.
-    g.beginFill(0x26241f, 1);
-    g.drawPolygon([
-      0, H, 0, 512 + oy, 196 + ox, 520 + oy, 330 + ox, 540 + oy,
-      950 + ox, 540 + oy, 1084 + ox, 520 + oy, W, 512 + oy, W, H,
-    ]);
+    g.beginFill(0x0a140d, 1);
+    g.drawRect(294, 558, 246, 146);
+    g.drawRect(740, 558, 246, 146);
     g.endFill();
-    g.beginFill(0x33302a, 1);
-    g.drawPolygon([0, 512 + oy, 196 + ox, 520 + oy, 330 + ox, 540 + oy, 950 + ox, 540 + oy, 1084 + ox, 520 + oy, W, 512 + oy, W, 548 + oy, 0, 548 + oy]);
-    g.endFill();
-    rivets(g, [[30, 540], [150, 545], [1150, 545], [1250, 540], [70, 330], [1210, 330], [330, 560], [950, 560]].map(([x, y]) => [x + ox, y + oy * 0.4]));
 
-    // Propeller blur washing across the nose, felt more than seen: two soft
-    // blade streaks sweeping the arc, never a hard disc outline.
-    const propA = 0.03 + state.throttle * 0.04;
-    g.lineStyle(15, 0x1c1a16, propA);
-    g.arc(CX + ox, 322 + oy, 168, now * 22, now * 22 + 1.1);
-    g.arc(CX + ox, 322 + oy, 168, now * 22 + 3.4, now * 22 + 4.5);
+    // LEFT MFD — radar scope: rings, a rotating sweep, bandit blips.
+    const rcx = 417, rcy = 631, rr = 66;
+    g.lineStyle(1.5, 0x2f7a44, 0.9);
+    g.drawCircle(rcx, rcy, rr);
+    g.drawCircle(rcx, rcy, rr * 0.62);
+    g.drawCircle(rcx, rcy, rr * 0.3);
+    g.moveTo(rcx - rr, rcy); g.lineTo(rcx + rr, rcy);
+    g.moveTo(rcx, rcy - rr); g.lineTo(rcx, rcy + rr);
+    const sa = now * 1.9 % (Math.PI * 2);
+    g.lineStyle(2.5, 0x8affb0, 0.9);
+    g.moveTo(rcx, rcy); g.lineTo(rcx + Math.cos(sa) * rr, rcy + Math.sin(sa) * rr);
     g.lineStyle(0);
-
-    drawGunsight(g, state, ox, oy, now);
-    drawGauges(g, state, ox, oy);
-    drawStick(g, state, ox, oy);
-
-    // Muzzle light bouncing off the panel while the guns fire: soft nested
-    // ellipses, brightest at the panel's top edge, fading as they grow.
-    if (flash > 0.05) {
-      for (let i = 3; i >= 1; i -= 1) {
-        g.beginFill(0xffb84d, flash * 0.05);
-        g.drawEllipse(CX + ox, 585 + oy, 190 * i, 42 * i);
-        g.endFill();
-      }
-      g.beginFill(0xffe08a, flash * 0.8);
-      g.drawCircle(CX - 168 + ox, 498 + oy, 13 * flash + 4);
-      g.drawCircle(CX + 168 + ox, 498 + oy, 13 * flash + 4);
+    g.beginFill(0x8affb0, 1);
+    g.drawPolygon([rcx, rcy - 7, rcx + 5, rcy + 6, rcx - 5, rcy + 6]);
+    g.endFill();
+    for (const e of enemies) {
+      if (e.dead) continue;
+      const bx = clamp(rcx + (e.x - state.x) / 900 * rr, rcx - rr, rcx + rr);
+      const by = clamp(rcy - (e.z - state.z) / 1600 * rr, rcy - rr, rcy + rr);
+      g.beginFill(e === state.lockTarget ? 0xff5347 : 0xffb03a, 1);
+      g.drawRect(bx - 3, by - 3, 6, 6);
       g.endFill();
     }
-    // Battle damage, felt from inside: smoke curling past the panel when the
-    // engine is hit, and a star of cracks in the glass when she is hit hard.
+    if (state.inbound) {
+      g.beginFill(0xff5347, Math.floor(now * 3) % 2 === 0 ? 1 : 0.3);
+      g.drawCircle(rcx + rr * 0.55, rcy - rr * 0.55, 5);
+      g.endFill();
+    }
+
+    // RIGHT MFD — systems page: bars for hull and fuel, stores in figures.
+    const bar = (y, frac, col) => {
+      g.beginFill(0x1d2b20, 1); g.drawRect(856, y, 118, 10); g.endFill();
+      g.beginFill(col, 1); g.drawRect(856, y, 118 * clamp(frac, 0, 1), 10); g.endFill();
+    };
+    bar(576, state.hull / 100, state.hull < 45 ? 0xff5347 : 0x9fe870);
+    bar(606, state.fuel / 100, state.fuel < 25 ? 0xffb03a : 0x9fe870);
+    mfdText.text = [
+      'SYS PAGE',
+      `HULL ${Math.round(state.hull)}%`,
+      `FUEL ${Math.round(state.fuel)}%`,
+      `MSL ${state.missiles}  FLR ${state.flares}`,
+      `AB ${state.wep ? 'ON' : 'OFF'}  GUN ${Math.round(state.gunHeat * 100)}%`,
+    ].join('\n');
+    mfdText.visible = true;
+
+    // Damage still talks: smoke past the panel, cracks in the canopy.
     if (state.hull < 70 && !state.onGround) {
       const wisps = state.hull < 35 ? 5 : 3;
       for (let i = 0; i < wisps; i += 1) {
         const wx = 480 + ((i * 173 + now * 60) % 320);
         const wy = 520 - ((now * 46 + i * 61) % 130);
-        g.beginFill(0x2b2b2b, 0.16 + (70 - state.hull) * 0.004);
+        g.beginFill(0x0c0c0c, 0.2 + (70 - state.hull) * 0.004);
         g.drawCircle(wx + ox, wy + oy, 15 + i * 5);
         g.endFill();
       }
     }
     if (state.hull < 40) {
-      g.lineStyle(2, 0xe8f2f6, 0.65);
+      g.lineStyle(2, 0xd8ecf4, 0.6);
       const cxk = 905 + ox, cyk = 150 + oy;
       g.moveTo(cxk, cyk); g.lineTo(cxk + 44, cyk - 20);
       g.moveTo(cxk, cyk); g.lineTo(cxk + 58, cyk + 16);
       g.moveTo(cxk, cyk); g.lineTo(cxk + 18, cyk + 48);
       g.moveTo(cxk, cyk); g.lineTo(cxk - 30, cyk + 30);
-      g.moveTo(cxk + 44, cyk - 20); g.lineTo(cxk + 74, cyk - 30);
-      g.moveTo(cxk + 58, cyk + 16); g.lineTo(cxk + 88, cyk + 22);
       g.lineStyle(0);
     }
-    // Sun glare on the glass when she noses down toward the light.
-    const glare = clamp((-state.pitch) * 0.5 + 0.08, 0, 0.4);
-    g.beginFill(0xfff2c0, glare * 0.35);
-    g.drawPolygon([700, 0, W, 0, W, 300, 900, 190]);
-    g.endFill();
-  }
-
-  function drawGunsight(g, state, ox, oy, now) {
-    const x = CX + ox, y = 296 + oy;
-    // Reflector glass, brass ring, glowing reticle.
-    g.beginFill(0xbfe0ea, 0.1); g.drawCircle(x, y, 52); g.endFill();
-    g.lineStyle(5, 0x8a6f35, 1); g.drawCircle(x, y, 52); g.lineStyle(0);
-    g.lineStyle(2, 0xffdf8a, 0.95);
-    g.drawCircle(x, y, 30);
-    g.moveTo(x - 46, y); g.lineTo(x - 12, y);
-    g.moveTo(x + 12, y); g.lineTo(x + 46, y);
-    g.moveTo(x, y - 46); g.lineTo(x, y - 12);
-    g.moveTo(x, y + 12); g.lineTo(x, y + 46);
-    g.lineStyle(0);
-    g.beginFill(0xffe98a, 1); g.drawCircle(x, y, 3.4); g.endFill();
-    // Sight post down to the panel.
-    g.beginFill(0x2c2a24, 1); g.drawRect(x - 7, y + 52, 14, 66); g.endFill();
     void now;
   }
 
-  function gaugeFace(g, x, y, r) {
-    g.beginFill(0x141310, 1); g.drawCircle(x, y, r + 7); g.endFill();
-    g.lineStyle(3, 0x8a6f35, 1); g.drawCircle(x, y, r + 5); g.lineStyle(0);
-    g.beginFill(0xf1e7cb, 1); g.drawCircle(x, y, r); g.endFill();
-  }
-
-  function needle(g, x, y, angle, len, colour = 0xb03a26) {
-    const a = angle - Math.PI / 2;
-    g.lineStyle(4, colour, 1);
-    g.moveTo(x - Math.cos(a) * len * 0.25, y - Math.sin(a) * len * 0.25);
-    g.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len);
-    g.lineStyle(0);
-    g.beginFill(0x22211d, 1); g.drawCircle(x, y, 6); g.endFill();
-  }
-
-  function ticks(g, x, y, r, count, from, to) {
-    g.lineStyle(2, 0x35322a, 1);
-    for (let i = 0; i <= count; i += 1) {
-      const a = from + (to - from) * (i / count);
-      g.moveTo(x + Math.cos(a) * (r - 9), y + Math.sin(a) * (r - 9));
-      g.lineTo(x + Math.cos(a) * (r - 3), y + Math.sin(a) * (r - 3));
-    }
-    g.lineStyle(0);
-  }
-
-  function drawGauges(g, state, ox, oy) {
-    const spd = mph(state.speed);
-    const altF = feet(state.alt);
-    // Airspeed, bottom left.
-    let x = 218 + ox, y = 622 + oy;
-    gaugeFace(g, x, y, 52);
-    ticks(g, x, y, 52, 10, Math.PI * 0.75, Math.PI * 2.25);
-    needle(g, x, y, Math.PI * 0.75 + clamp(spd / 320, 0, 1) * Math.PI * 1.5, 40);
-    // Artificial horizon, centre left: the ball rolls and pitches with the
-    // aircraft. The earth half is the part of the disc below the tilted
-    // horizon line, sampled around the rim so it never spills past the glass.
-    x = 420 + ox; y = 618 + oy;
-    g.beginFill(0x141310, 1); g.drawCircle(x, y, 63); g.endFill();
-    g.lineStyle(3, 0x8a6f35, 1); g.drawCircle(x, y, 61); g.lineStyle(0);
-    g.beginFill(0x7fb0d8, 1);
-    g.drawCircle(x, y, 54);
-    g.endFill();
-    const rollA = -state.roll * 0.9;
-    const pitchOff = clamp(state.pitch * 22, -18, 18);
-    const downX = Math.sin(rollA), downY = Math.cos(rollA);
-    const earth = [];
-    for (let i = 0; i <= 40; i += 1) {
-      const a = (i / 40) * Math.PI * 2;
-      const px = Math.cos(a) * 54, py = Math.sin(a) * 54;
-      if (px * downX + py * downY > pitchOff) earth.push(x + px, y + py);
-    }
-    // Close the earth polygon along the horizon chord.
-    const chord = Math.sqrt(Math.max(0, 54 * 54 - pitchOff * pitchOff));
-    const alongX = Math.cos(rollA), alongY = -Math.sin(rollA);
-    const cxp = x + downX * pitchOff, cyp = y + downY * pitchOff;
-    if (earth.length > 2) {
-      g.beginFill(0x7a5c38, 1);
-      g.drawPolygon([...earth, cxp - alongX * chord, cyp - alongY * chord, cxp + alongX * chord, cyp + alongY * chord]);
+  /** A jet silhouette streaks across the title sky, burner lit. */
+  function drawFlyby(g, now) {
+    const fx0 = ((now * 150) % 1560) - 140;
+    const fy0 = 196 + Math.sin(now * 0.8) * 16;
+    const s = 1.15;
+    // Sunset rim beneath, then the airframe over it.
+    for (const [col, dy] of [[0xff9a4d, 3.5], [0x2e343a, 0]]) {
+      g.beginFill(col, col === 0x2e343a ? 1 : 0.4);
+      g.drawPolygon([
+        fx0 - 86 * s, fy0 + dy, fx0 - 30 * s, fy0 - 9 * s, fx0 + 44 * s, fy0 - 11 * s,
+        fx0 + 92 * s, fy0 - 3 * s, fx0 + 96 * s, fy0 + dy, fx0 + 40 * s, fy0 + 6 * s,
+        fx0 + 6 * s, fy0 + 20 * s, fx0 - 4 * s, fy0 + 20 * s, fx0 - 24 * s, fy0 + 7 * s,
+        fx0 - 62 * s, fy0 + 8 * s, fx0 - 78 * s, fy0 - 12 * s, fx0 - 66 * s, fy0 - 13 * s,
+      ]);
       g.endFill();
     }
-    g.lineStyle(2, 0xf1e7cb, 0.9);
-    g.moveTo(cxp - alongX * chord, cyp - alongY * chord);
-    g.lineTo(cxp + alongX * chord, cyp + alongY * chord);
-    g.lineStyle(0);
-    g.lineStyle(3, 0xffe98a, 1);
-    g.moveTo(x - 26, y); g.lineTo(x - 8, y); g.moveTo(x + 8, y); g.lineTo(x + 26, y);
-    g.moveTo(x, y - 3); g.lineTo(x, y + 3);
-    g.lineStyle(0);
-    // Altimeter, centre right, with a little hundreds drum.
-    x = 858 + ox; y = 618 + oy;
-    gaugeFace(g, x, y, 52);
-    ticks(g, x, y, 52, 10, -Math.PI / 2, Math.PI * 1.5);
-    needle(g, x, y, (altF % 1000) / 1000 * Math.PI * 2, 38);
-    needle(g, x, y, (altF % 10000) / 10000 * Math.PI * 2, 28, 0x35322a);
-    // Compass, bottom right: the card turns under a fixed lubber line.
-    x = 1060 + ox; y = 622 + oy;
-    gaugeFace(g, x, y, 52);
-    const hdg = ((state.heading % 360) + 360) % 360;
-    for (let i = 0; i < 12; i += 1) {
-      const a = ((i * 30 - hdg) * Math.PI) / 180 - Math.PI / 2;
-      g.lineStyle(i % 3 === 0 ? 3 : 1, 0x35322a, 1);
-      g.moveTo(x + Math.cos(a) * 38, y + Math.sin(a) * 38);
-      g.lineTo(x + Math.cos(a) * 47, y + Math.sin(a) * 47);
-      g.lineStyle(0);
-    }
-    g.beginFill(0xb03a26, 1);
-    g.drawPolygon([x - 6, y - 52, x + 6, y - 52, x, y - 40]);
+    // Burner flame trailing the tail.
+    const fl = 34 + Math.sin(now * 43) * 7;
+    g.beginFill(0xff7a2e, 0.75);
+    g.drawPolygon([fx0 - 86 * s, fy0 - 2, fx0 - (86 + fl) * s, fy0 + 1, fx0 - 86 * s, fy0 + 4]);
     g.endFill();
-    needle(g, x, y, 0, 0); // hub only; the card does the moving
-    // RPM gauge, small, tucked left of the stick where the panel has room.
-    x = 548 + ox; y = 652 + oy;
-    gaugeFace(g, x, y, 32);
-    ticks(g, x, y, 32, 6, Math.PI * 0.75, Math.PI * 2.25);
-    needle(g, x, y, Math.PI * 0.75 + state.throttle * (state.wep ? 1.62 : 1.5), 22, 0x35322a);
-    if (state.wep) { g.beginFill(0xd8472e, 1); g.drawCircle(x + 20, y - 22, 5); g.endFill(); }
-
-    // Stencilled captions and painted value placards under each main gauge.
-    valSpeed.position.set(218 + ox, 682 + oy); valSpeed.text = `${spd} MPH`;
-    valAlt.position.set(858 + ox, 682 + oy); valAlt.text = `${altF} FT`;
-    valHdg.position.set(1060 + ox, 682 + oy); valHdg.text = `HDG ${String(Math.round(hdg)).padStart(3, '0')}°`;
+    g.beginFill(0xbfe0ff, 0.9);
+    g.drawPolygon([fx0 - 86 * s, fy0, fx0 - (86 + fl * 0.5) * s, fy0 + 1, fx0 - 86 * s, fy0 + 2.5]);
+    g.endFill();
   }
 
-  function drawStick(g, state, ox, oy) {
-    const tiltX = state.roll * 26;
-    const tiltY = state.pitch * 12;
-    const bx = CX + ox, by = H + 6;
-    g.beginFill(0x1d1b17, 1);
-    g.drawPolygon([bx - 15, by, bx + tiltX - 8, by - 92 + tiltY, bx + tiltX + 8, by - 92 + tiltY, bx + 15, by]);
-    g.endFill();
-    g.beginFill(0x4a3520, 1);
-    g.drawRoundedRect(bx + tiltX - 11, by - 128 + tiltY, 22, 42, 8);
-    g.endFill();
-    g.beginFill(0xd8472e, 1);
-    g.drawCircle(bx + tiltX, by - 122 + tiltY, 5.5); // the firing button, under the thumb
-    g.endFill();
-    // Throttle lever on the left wall, sliding with power.
-    const tx = 96 + ox, ty = 600 - state.throttle * 56 + oy;
-    g.beginFill(0x1d1b17, 1); g.drawRoundedRect(84 + ox, 528 + oy, 22, 92, 8); g.endFill();
-    g.beginFill(0x8a6f35, 1); g.drawCircle(tx, ty, 13); g.endFill();
-  }
-
-  /** Where the pilot's attention belongs, for the marker lettering. */
   function objectivePoint(state, enemies) {
     if (state.phase === PHASE.RINGS) {
       const ring = RING_COURSE[state.ringIndex];
       if (!ring) return null;
       const p = project(state, ring.x, ring.alt, ring.z);
-      return p ? { ...p, label: `RING ${state.ringIndex + 1} · ${Math.round(p.rel * 3.281)} FT` } : null;
+      return p ? { ...p, label: `WPT ${state.ringIndex + 1} · ${Math.round(p.rel * 3.281)} FT` } : null;
     }
     if (state.phase === PHASE.DOGFIGHT) {
       let best = null;
@@ -756,7 +807,9 @@ export function createRenderer(container) {
   // ------------------------------------------------------------- screens
   function draw(state, enemies, screen, dt, now, camera = CAMERA.COCKPIT) {
     world.clear(); fx.clear(); cockpit.clear();
+    for (const e of enemies) if (e.boom > 0) e.boom = Math.max(0, e.boom - dt * 0.7);
     drawWorld(world, state, screen === SCREEN.TITLE ? [] : enemies, now);
+    if (screen === SCREEN.TITLE) drawFlyby(fx, now);
     // Particles and tracers live between world and cockpit.
     if (state.firing) spawnTracers(state);
     if (flash > 0) flash = Math.max(0, flash - dt * 9);
@@ -780,22 +833,30 @@ export function createRenderer(container) {
       fx.drawCircle(p.x, p.y, p.size);
       fx.endFill();
     }
+    // A launch flash blooms under the wing the moment a missile leaves.
+    if (state.launchT > 0 && camera === CAMERA.CHASE) {
+      fx.beginFill(0xffc46b, state.launchT * 1.6);
+      fx.drawCircle(CX + 120, 470, 26 + (0.35 - state.launchT) * 60);
+      fx.endFill();
+    }
+    const inGame = screen === SCREEN.PLAY || screen === SCREEN.PAUSED;
     if (camera === CAMERA.CHASE && screen !== SCREEN.TITLE) {
       drawOwnPlane(fx, state, now);
-      drawChaseStrip(cockpit, state, now);
-    } else {
-      drawCockpit(cockpit, state, now);
+    } else if (screen !== SCREEN.TITLE) {
+      drawPanel(cockpit, state, enemies, now);
     }
+    if (screen !== SCREEN.TITLE) drawHUD(cockpit, state, enemies, now);
+    if (!inGame) { hudSys.visible = false; warnText.visible = false; lockText.visible = false; mfdText.visible = false; hudSpdVal.visible = hudAltVal.visible = hudHdgVal.visible = false; }
+    else { hudSpdVal.visible = hudAltVal.visible = hudHdgVal.visible = true; if (camera !== CAMERA.COCKPIT) mfdText.visible = false; }
 
-    const inGame = screen === SCREEN.PLAY || screen === SCREEN.PAUSED;
     noteText.visible = inGame && state.messageTime > 0;
     noteText.text = state.message || '';
     plateText.visible = inGame;
     plate2Text.visible = inGame;
     if (inGame) {
-      const phaseName = { takeoff: 'TAKE OFF', rings: 'RING COURSE', dogfight: 'AIR WAR — DOGFIGHT', return: 'RETURN — LAND', landed: 'LANDED', crashed: 'DOWN' }[state.phase] || '';
-      plateText.text = `${phaseName}   ·   SCORE ${state.score}   ·   RINGS ${state.ringsHit}/6   ·   KILLS ${state.kills}/${KILLS_TO_CLEAR}`;
-      plate2Text.text = `FUEL ${Math.round(state.fuel)} GAL   ·   HULL ${Math.round(state.hull)}%${state.hull < 45 ? ' — DAMAGED' : ''}   ·   CAM ${camera === CAMERA.CHASE ? 'CHASE' : 'COCKPIT'} (C)`;
+      const phaseName = { takeoff: 'TAKE OFF', rings: 'WAYPOINT RUN', dogfight: 'AIR WAR — DOGFIGHT', return: 'RETURN — LAND', landed: 'LANDED', crashed: 'DOWN' }[state.phase] || '';
+      plateText.text = `${phaseName}   ·   SCORE ${state.score}   ·   WPT ${state.ringsHit}/6   ·   KILLS ${state.kills}/${KILLS_TO_CLEAR}`;
+      plate2Text.text = `FUEL ${Math.round(state.fuel)}%   ·   HULL ${Math.round(state.hull)}%${state.hull < 45 ? ' — DAMAGED' : ''}   ·   CAM ${camera === CAMERA.CHASE ? 'CHASE' : 'COCKPIT'} (C)`;
     }
     const obj = inGame ? objectivePoint(state, enemies) : null;
     markerText.visible = Boolean(obj);
@@ -803,24 +864,23 @@ export function createRenderer(container) {
       markerText.text = obj.label;
       markerText.position.set(obj.x, obj.y - 26 / Math.max(0.4, obj.scale) - 14);
     }
-    valSpeed.visible = valAlt.visible = valHdg.visible = screen !== SCREEN.TITLE;
     titleText.visible = subText.visible = promptText.visible = controlsText.visible = screen === SCREEN.TITLE;
     if (screen === SCREEN.TITLE) {
-      titleText.text = 'IRON WINGS';
-      subText.text = '— SKIES OF 1944 —';
+      titleText.text = 'STEEL VIPER';
+      subText.text = '— MODERN AIR COMBAT —';
       promptText.text = 'Click or press ENTER to take off';
-      controlsText.text = 'MOUSE steer · W / S throttle · SPACE fire · SHIFT war emergency power · C camera\nP pause · M mute · Thread the rings, splash five bandits who shoot back, land her soft.';
+      controlsText.text = 'MOUSE steer · W / S throttle · SPACE cannon · F missile (hold target in the circle to lock)\nSHIFT afterburner · X flares · C camera · P pause · M mute · Splash five bandits, land her soft.';
     }
     pauseText.visible = screen === SCREEN.PAUSED;
     pauseText.text = '— PAUSED —';
     endTitle.visible = endLines.visible = screen === SCREEN.OVER;
     if (screen === SCREEN.OVER) {
       const landed = state.phase === PHASE.LANDED;
-      endTitle.text = landed ? 'HOME FOR TEA' : 'IN THE DRINK';
+      endTitle.text = landed ? 'BACK AT BASE' : 'VIPER DOWN';
       const td = state.touchdown;
       endLines.text = landed
-        ? `Touchdown at ${mph(td.speed)} mph, sink ${Math.abs(td.vSpeed).toFixed(1)} m/s — ${Math.abs(td.vSpeed) < 3 ? 'a greaser!' : Math.abs(td.vSpeed) < 6 ? 'firm but fair.' : 'the undercarriage groans.'}\nRings ${state.ringsHit} of 6 · Bandits splashed ${state.kills} · Final score ${state.score}\n\nPress ENTER to fly the sortie again`
-        : `The sortie ends in the sea off the coast.\nRings ${state.ringsHit} of 6 · Bandits splashed ${state.kills} · Score ${state.score}\n\nPress ENTER to try again`;
+        ? `Touchdown at ${knots(td.speed)} kt, sink ${Math.abs(td.vSpeed).toFixed(1)} m/s — ${Math.abs(td.vSpeed) < 3 ? 'a greaser!' : Math.abs(td.vSpeed) < 6 ? 'firm but fair.' : 'the gear groans.'}\nWaypoints ${state.ringsHit} of 6 · Bandits splashed ${state.kills} · Final score ${state.score}\n\nPress ENTER to fly the sortie again`
+        : `The sortie ends in the sea off the coast.\nWaypoints ${state.ringsHit} of 6 · Bandits splashed ${state.kills} · Score ${state.score}\n\nPress ENTER to try again`;
     }
   }
 
