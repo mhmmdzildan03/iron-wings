@@ -6,7 +6,9 @@
 // stick that leans with your hand. No digital HUD — the only lettering is
 // stencilled placards and a chalked mission note, as a real panel would have.
 
-import { PHASE, RING_COURSE, RING_RADIUS, HOME_Z, STRIP, clamp, mph, feet } from './flight.js';
+import { PHASE, RING_COURSE, RING_RADIUS, HOME_Z, STRIP, KILLS_TO_CLEAR, clamp, mph, feet } from './flight.js';
+
+export const CAMERA = { COCKPIT: 'cockpit', CHASE: 'chase' };
 
 export const SCREEN = { TITLE: 'title', PLAY: 'play', PAUSED: 'paused', OVER: 'over' };
 export const W = 1280;
@@ -58,6 +60,11 @@ export function createRenderer(container) {
   noteText.anchor.set(0.5, 0); noteText.position.set(CX, 14);
   const plateText = mkText(19, { fill: 0xffe9b0, stroke: 0x1c1206, strokeThickness: 3 });
   plateText.position.set(18, 42);
+  const plate2Text = mkText(17, { fill: 0xd8c491, stroke: 0x1c1206, strokeThickness: 3 });
+  plate2Text.position.set(18, 66);
+  // Objective marker lettering, pinned over the ring / strip / bandit ahead.
+  const markerText = mkText(19, { fill: 0xffc93c, stroke: 0x2a1c08, strokeThickness: 4, fontWeight: 'bold' });
+  markerText.anchor.set(0.5, 1);
   const valSpeed = mkText(17, { fill: 0xffe9b0 }); valSpeed.anchor.set(0.5, 0);
   const valAlt = mkText(17, { fill: 0xffe9b0 }); valAlt.anchor.set(0.5, 0);
   const valHdg = mkText(17, { fill: 0xffe9b0 }); valHdg.anchor.set(0.5, 0);
@@ -142,10 +149,31 @@ export function createRenderer(container) {
       g.endFill();
     }
 
+    // Far mountain ranges on the horizon: two hazy layers, snow on the high
+    // one, drifting only a touch with heading — distance you can feel.
+    const mShift = -state.heading * 1.4 + rollShift * 0.1;
+    g.beginFill(0x8d7d8f, 0.55);
+    g.drawPolygon([-40 + mShift, hy, 120 + mShift, hy - 88, 260 + mShift, hy - 30, 420 + mShift, hy - 104, 580 + mShift, hy - 26, 760 + mShift, hy - 76, 940 + mShift, hy - 20, 1120 + mShift, hy - 92, 1300 + mShift, hy]);
+    g.endFill();
+    g.beginFill(0xf4ece2, 0.8);
+    g.drawPolygon([392 + mShift, hy - 92, 420 + mShift, hy - 104, 448 + mShift, hy - 90, 428 + mShift, hy - 84, 420 + mShift, hy - 94, 410 + mShift, hy - 84]);
+    g.drawPolygon([1092 + mShift, hy - 80, 1120 + mShift, hy - 92, 1148 + mShift, hy - 78, 1128 + mShift, hy - 72, 1120 + mShift, hy - 84, 1110 + mShift, hy - 72]);
+    g.endFill();
+    g.beginFill(0x6d5a63, 0.75);
+    g.drawPolygon([-40 + mShift * 1.6, hy, 200 + mShift * 1.6, hy - 44, 360 + mShift * 1.6, hy - 12, 560 + mShift * 1.6, hy - 52, 760 + mShift * 1.6, hy - 10, 980 + mShift * 1.6, hy - 40, 1180 + mShift * 1.6, hy - 8, 1320 + mShift * 1.6, hy]);
+    g.endFill();
+    // Horizon haze: a warm breath of mist where sky meets earth and sea.
+    for (let i = 0; i < 3; i += 1) {
+      g.beginFill(0xffd9a0, 0.1);
+      g.drawRect(0, hy - 12 - i * 9, W, 10);
+      g.endFill();
+    }
+
     drawGround(g, state, hy, rollShift);
     drawRunway(g, state);
     drawRings(g, state, now);
     for (const e of enemies) drawEnemy(g, state, e, now);
+    drawFlak(g, state);
     // Speed streaks rushing past the canopy sides, out in the world where
     // they belong — drawn before the cockpit so the frame stays clean.
     if (!state.onGround && state.speed > 40) {
@@ -189,6 +217,27 @@ export function createRenderer(container) {
       const gx = ((r * 173 + Math.floor(state.z / 3)) % 380);
       g.moveTo(gx, y0 + 4); g.lineTo(gx + 34 + r * 6, y0 + 4);
       g.lineStyle(0);
+      // The sun's road on the water: a bright shimmering lane under the sun,
+      // broken into dashes that crawl as the coast slides past.
+      const sunLane = 880 - state.heading * 3.2;
+      if (sunLane > 40 && gx < sunLane) {
+        g.lineStyle(3, 0xffd98c, 0.55);
+        const sx0 = sunLane - 60 + ((r * 67 + Math.floor(state.z / 5)) % 90);
+        g.moveTo(sx0, y0 + 3); g.lineTo(sx0 + 26 + r * 9, y0 + 3);
+        g.lineStyle(0);
+      }
+      // Hedgerows between the fields and pine clusters standing on them:
+      // dark green bones for the patchwork, so the land reads as country.
+      g.lineStyle(3, 0x44542c, 0.8);
+      g.moveTo(coastBot, y0); g.lineTo(Math.min(W, coastBot + (W - coastBot + 200)), y0);
+      g.lineStyle(0);
+      for (let tr = 0; tr < 3; tr += 1) {
+        const tx = coastBot + 60 + ((r * 211 + tr * 149 + Math.floor(state.z / 2)) % Math.max(80, W - coastBot - 90));
+        const ts = 5 + t0 * 13;
+        g.beginFill(0x39512e, 0.95);
+        g.drawPolygon([tx - ts * 0.55, y0 + ts * 0.4, tx + ts * 0.55, y0 + ts * 0.4, tx, y0 - ts]);
+        g.endFill();
+      }
     }
     // Beach line where sea meets sand meets grass.
     g.lineStyle(7, 0xe6cf9a, 0.95);
@@ -205,6 +254,26 @@ export function createRenderer(container) {
       const vx = coastBot + 120 + i * 36;
       g.beginFill(0xe8ddc4, 1); g.drawRect(vx, villageY + (i % 3) * 9, 20, 13); g.endFill();
       g.beginFill(0x9c4a32, 1); g.drawPolygon([vx - 2, villageY + (i % 3) * 9, vx + 22, villageY + (i % 3) * 9, vx + 10, villageY - 8 + (i % 3) * 9]); g.endFill();
+    }
+  }
+
+  /** Flak bursts: a hot orange heart for a blink, then a dirty grey puff that hangs and thins. */
+  function drawFlak(g, state) {
+    for (const f of state.flak) {
+      const p = project(state, f.x, f.alt, f.z);
+      if (!p) continue;
+      const r = (7 + f.age * 15) * clamp(p.scale, 0.4, 2.2);
+      if (f.age < 0.22) {
+        g.beginFill(0xffa63e, 0.95); g.drawCircle(p.x, p.y, r * 0.55); g.endFill();
+        g.beginFill(0xffe9a8, 0.95); g.drawCircle(p.x, p.y, r * 0.28); g.endFill();
+      }
+      const fade = clamp(1 - f.age / 2.6, 0, 1) * 0.55;
+      g.beginFill(0x3d3a38, fade);
+      g.drawCircle(p.x, p.y, r);
+      g.drawCircle(p.x - r * 0.6, p.y + r * 0.25, r * 0.7);
+      g.drawCircle(p.x + r * 0.62, p.y + r * 0.2, r * 0.66);
+      g.drawCircle(p.x + r * 0.1, p.y - r * 0.5, r * 0.6);
+      g.endFill();
     }
   }
 
@@ -274,14 +343,19 @@ export function createRenderer(container) {
     const p = project(state, e.x, e.alt, e.z);
     if (!p) return;
     const s = clamp(p.scale * 0.16, 0.12, 2.6);
-    const tilt = e.dead ? 0.7 : Math.sin(now * 2 + e.z) * 0.08;
     const x = p.x, y = p.y;
+    // A wreck spins as it falls: rotate every point of the silhouette around
+    // its centre by an angle that grows with its smoke trail.
+    const spin = e.dead ? e.smoke * 2.6 : Math.sin(now * 2 + e.z) * 0.06;
+    const cs = Math.cos(spin), sn = Math.sin(spin);
+    const R = (px, py) => [x + px * cs - py * sn, y + px * sn + py * cs];
+    const poly = (pts) => { const out = []; for (let i = 0; i < pts.length; i += 2) out.push(...R(pts[i], pts[i + 1])); return out; };
     g.lineStyle(0);
     // Wing, fuselage, tail — a dark patrol silhouette against the sunset.
     g.beginFill(e.hitFlash > 0 ? 0xff6b4a : 0x3d4438, 1);
-    g.drawPolygon([x - 74 * s, y + 6 * s, x + 74 * s, y + 6 * s, x + 30 * s, y - 4 * s, x - 30 * s, y - 4 * s]);
+    g.drawPolygon(poly([-74 * s, 6 * s, 74 * s, 6 * s, 30 * s, -4 * s, -30 * s, -4 * s]));
     g.drawEllipse(x, y - 2 * s, 46 * s, 11 * s);
-    g.drawPolygon([x - 8 * s, y - 8 * s, x + 10 * s, y - 26 * s, x + 20 * s, y - 8 * s]);
+    g.drawPolygon(poly([-8 * s, -8 * s, 10 * s, -26 * s, 20 * s, -8 * s]));
     g.endFill();
     g.beginFill(0x22281f, 1);
     g.drawEllipse(x + 6 * s, y - 10 * s, 15 * s, 6 * s); // canopy
@@ -296,8 +370,120 @@ export function createRenderer(container) {
       g.drawCircle(x + 40 * s, y - 24 * s, (e.dead ? 22 : 11) * s);
       g.endFill();
     }
-    if (e.dead && Math.random() < 0.5) burst(x, y, 0xff8c3a, 2, 60);
-    void tilt;
+    if (e.dead) {
+      // Fire in the wreck, breathing as it tumbles down.
+      g.beginFill(0xff8c3a, 0.75 + Math.sin(now * 31) * 0.2);
+      g.drawCircle(x + 10 * s, y - 6 * s, 7 * s);
+      g.endFill();
+      if (Math.random() < 0.5) burst(x, y, 0xff8c3a, 2, 60);
+    }
+    // Return fire: when her guns flash, two tracer lanes reach past the camera.
+    if (e.muzzle > 0) {
+      g.lineStyle(3, 0xffb066, 0.85);
+      g.moveTo(x - 20 * s, y); g.lineTo(x - 90, H + 40);
+      g.moveTo(x + 20 * s, y); g.lineTo(x + 130, H + 40);
+      g.lineStyle(1, 0xfff0d0, 0.9);
+      g.moveTo(x - 20 * s, y); g.lineTo(x - 90, H + 40);
+      g.moveTo(x + 20 * s, y); g.lineTo(x + 130, H + 40);
+      g.lineStyle(0);
+      g.beginFill(0xffd977, 1); g.drawCircle(x, y, 4 * s + 2); g.endFill();
+    }
+  }
+
+  // ---------------------------------------------------------- own aircraft
+  /**
+   * The player's fighter seen from behind and above — the chase camera.
+   * Drawn whole: olive fuselage, broad wings that bank with the roll, tail,
+   * canopy glass, a blurred prop at the far end and her shadow racing along
+   * the ground below. Wing guns throw tracer lanes to the vanishing point.
+   */
+  function drawOwnPlane(g, state, now) {
+    const px = CX - state.roll * 38;
+    const py = (state.onGround ? 492 : 428) + state.pitch * 24;
+    const k = 1.35;
+    const spin = -state.roll * 0.55;
+    const cs = Math.cos(spin), sn = Math.sin(spin);
+    const R = (lx, ly) => [px + lx * cs - ly * sn, py + lx * sn + ly * cs];
+    const poly = (pts) => { const out = []; for (let i = 0; i < pts.length; i += 2) out.push(...R(pts[i], pts[i + 1])); return out; };
+
+    // Her shadow on the earth, tighter and darker the lower she flies.
+    const shScale = clamp(1 - state.alt * 0.004, 0.35, 1);
+    g.beginFill(0x1e2416, 0.28 * shScale + 0.08);
+    g.drawEllipse(px + state.alt * 0.35, 694, 150 * shScale + 30, 15 * shScale + 4);
+    g.endFill();
+
+    if (state.firing) {
+      for (const sgn of [-1, 1]) {
+        const [gx, gy] = R(sgn * 62 * k, -4 * k);
+        g.lineStyle(3, 0xffe98a, 0.85);
+        g.moveTo(gx, gy); g.lineTo(CX + sgn * 9, 298);
+        g.lineStyle(1, 0xffffff, 0.9);
+        g.moveTo(gx, gy); g.lineTo(CX + sgn * 9, 298);
+        g.lineStyle(0);
+        g.beginFill(0xffe08a, 1); g.drawCircle(gx, gy, 5); g.endFill();
+      }
+    }
+    // Tail feathers first, then ONE main wing straight across behind the
+    // fuselage, so the silhouette reads as a single aeroplane.
+    g.beginFill(0x424a33, 1);
+    g.drawPolygon(poly([-52 * k, 52 * k, 52 * k, 52 * k, 42 * k, 64 * k, -42 * k, 64 * k]));
+    g.drawPolygon(poly([-158 * k, -4 * k, 158 * k, -4 * k, 148 * k, 12 * k, -148 * k, 12 * k]));
+    g.endFill();
+    // Wing roundels: a plain ring marking of our own, no one's insignia copied.
+    for (const sgn of [-1, 1]) {
+      const [rx, ry] = R(sgn * 102 * k, 4 * k);
+      g.beginFill(0xd8d3c2, 0.9); g.drawCircle(rx, ry, 9 * k); g.endFill();
+      g.beginFill(0x5a6f9e, 0.95); g.drawCircle(rx, ry, 5.5 * k); g.endFill();
+    }
+    // Fuselage: a teardrop — round at the cowling, tapering to the tail.
+    g.beginFill(0x4a5138, 1);
+    g.drawPolygon(poly([
+      0, -72 * k, 16 * k, -58 * k, 24 * k, -30 * k, 25 * k, 0,
+      19 * k, 34 * k, 10 * k, 58 * k, 0, 68 * k,
+      -10 * k, 58 * k, -19 * k, 34 * k, -25 * k, 0, -24 * k, -30 * k, -16 * k, -58 * k,
+    ]));
+    g.endFill();
+    g.beginFill(0x59634a, 0.8);
+    g.drawEllipse(px, py - 8 * k, 6.5 * k, 44 * k);
+    g.endFill();
+    // Canopy: a modest teardrop of slate glass, well forward.
+    const [cxp, cyp] = R(0, -30 * k);
+    g.beginFill(0x5d7684, 1); g.drawEllipse(cxp, cyp, 9.5 * k, 15 * k); g.endFill();
+    g.beginFill(0xcfe2ea, 0.85); g.drawEllipse(cxp - 2.5 * k, cyp - 4 * k, 3.5 * k, 6.5 * k); g.endFill();
+    // Propeller: a pale blurred band at the nose, strobing with rpm.
+    const [nx, ny] = R(0, -76 * k);
+    g.lineStyle(8, 0x22201c, 0.3 + state.throttle * 0.22);
+    g.moveTo(nx - 36 * k, ny); g.lineTo(nx + 36 * k, ny);
+    g.lineStyle(0);
+    g.beginFill(0x2c2a24, 1); g.drawCircle(nx, ny, 4.5 * k); g.endFill();
+    // WEP exhausts breathe blue flame either side of the cowling.
+    if (state.wep) {
+      for (const sgn of [-1, 1]) {
+        const [ex, ey] = R(sgn * 15 * k, -52 * k);
+        g.beginFill(0x7fb2ff, 0.75); g.drawEllipse(ex, ey, 4 * k, 9 * k); g.endFill();
+      }
+    }
+    // A shot-up engine trails smoke behind her.
+    if (state.hull < 70 && !state.onGround && Math.random() < 0.4) {
+      burst(px + (Math.random() - 0.5) * 20, py + 60, state.hull < 35 ? 0x2b2b2b : 0x6a6a6a, 2, 26);
+    }
+    void now;
+  }
+
+  /**
+   * The chase view's furniture: just a low leather ledge along the bottom —
+   * the gauges float over the world the way a bush pilot's panel-top
+   * instruments do, so the scenery (and a runway on final) stays visible.
+   */
+  function drawChaseStrip(g, state, now) {
+    g.beginFill(0x26241f, 0.96);
+    g.drawPolygon([0, H, 0, 676, W, 676, W, H]);
+    g.endFill();
+    g.lineStyle(7, 0x6d4a2f, 1);
+    g.moveTo(0, 678); g.lineTo(W, 678);
+    g.lineStyle(0);
+    drawGauges(g, state, 0, 0);
+    void now;
   }
 
   // -------------------------------------------------------------- cockpit
@@ -373,6 +559,29 @@ export function createRenderer(container) {
       g.drawCircle(CX - 168 + ox, 498 + oy, 13 * flash + 4);
       g.drawCircle(CX + 168 + ox, 498 + oy, 13 * flash + 4);
       g.endFill();
+    }
+    // Battle damage, felt from inside: smoke curling past the panel when the
+    // engine is hit, and a star of cracks in the glass when she is hit hard.
+    if (state.hull < 70 && !state.onGround) {
+      const wisps = state.hull < 35 ? 5 : 3;
+      for (let i = 0; i < wisps; i += 1) {
+        const wx = 480 + ((i * 173 + now * 60) % 320);
+        const wy = 520 - ((now * 46 + i * 61) % 130);
+        g.beginFill(0x2b2b2b, 0.16 + (70 - state.hull) * 0.004);
+        g.drawCircle(wx + ox, wy + oy, 15 + i * 5);
+        g.endFill();
+      }
+    }
+    if (state.hull < 40) {
+      g.lineStyle(2, 0xe8f2f6, 0.65);
+      const cxk = 905 + ox, cyk = 150 + oy;
+      g.moveTo(cxk, cyk); g.lineTo(cxk + 44, cyk - 20);
+      g.moveTo(cxk, cyk); g.lineTo(cxk + 58, cyk + 16);
+      g.moveTo(cxk, cyk); g.lineTo(cxk + 18, cyk + 48);
+      g.moveTo(cxk, cyk); g.lineTo(cxk - 30, cyk + 30);
+      g.moveTo(cxk + 44, cyk - 20); g.lineTo(cxk + 74, cyk - 30);
+      g.moveTo(cxk + 58, cyk + 16); g.lineTo(cxk + 88, cyk + 22);
+      g.lineStyle(0);
     }
     // Sun glare on the glass when she noses down toward the light.
     const glare = clamp((-state.pitch) * 0.5 + 0.08, 0, 0.4);
@@ -520,8 +729,32 @@ export function createRenderer(container) {
     g.beginFill(0x8a6f35, 1); g.drawCircle(tx, ty, 13); g.endFill();
   }
 
+  /** Where the pilot's attention belongs, for the marker lettering. */
+  function objectivePoint(state, enemies) {
+    if (state.phase === PHASE.RINGS) {
+      const ring = RING_COURSE[state.ringIndex];
+      if (!ring) return null;
+      const p = project(state, ring.x, ring.alt, ring.z);
+      return p ? { ...p, label: `RING ${state.ringIndex + 1} · ${Math.round(p.rel * 3.281)} FT` } : null;
+    }
+    if (state.phase === PHASE.DOGFIGHT) {
+      let best = null;
+      for (const e of enemies) {
+        if (e.dead) continue;
+        const p = project(state, e.x, e.alt, e.z);
+        if (p && (!best || p.rel < best.rel)) best = { ...p, label: `BANDIT · ${Math.round(p.rel * 3.281)} FT` };
+      }
+      return best;
+    }
+    if (state.phase === PHASE.RETURN) {
+      const p = project(state, 0, 0, HOME_Z + 300);
+      return p && p.rel > 0 ? { ...p, label: `RWY HOME · ${Math.round(p.rel * 3.281)} FT` } : null;
+    }
+    return null;
+  }
+
   // ------------------------------------------------------------- screens
-  function draw(state, enemies, screen, dt, now) {
+  function draw(state, enemies, screen, dt, now, camera = CAMERA.COCKPIT) {
     world.clear(); fx.clear(); cockpit.clear();
     drawWorld(world, state, screen === SCREEN.TITLE ? [] : enemies, now);
     // Particles and tracers live between world and cockpit.
@@ -547,15 +780,28 @@ export function createRenderer(container) {
       fx.drawCircle(p.x, p.y, p.size);
       fx.endFill();
     }
-    drawCockpit(cockpit, state, now);
+    if (camera === CAMERA.CHASE && screen !== SCREEN.TITLE) {
+      drawOwnPlane(fx, state, now);
+      drawChaseStrip(cockpit, state, now);
+    } else {
+      drawCockpit(cockpit, state, now);
+    }
 
     const inGame = screen === SCREEN.PLAY || screen === SCREEN.PAUSED;
     noteText.visible = inGame && state.messageTime > 0;
     noteText.text = state.message || '';
     plateText.visible = inGame;
+    plate2Text.visible = inGame;
     if (inGame) {
-      const phaseName = { takeoff: 'TAKE OFF', rings: 'RING COURSE', dogfight: 'DOGFIGHT', return: 'RETURN — LAND', landed: 'LANDED', crashed: 'DOWN' }[state.phase] || '';
-      plateText.text = `${phaseName}   ·   SCORE ${state.score}   ·   RINGS ${state.ringsHit}/6   ·   KILLS ${state.kills}`;
+      const phaseName = { takeoff: 'TAKE OFF', rings: 'RING COURSE', dogfight: 'AIR WAR — DOGFIGHT', return: 'RETURN — LAND', landed: 'LANDED', crashed: 'DOWN' }[state.phase] || '';
+      plateText.text = `${phaseName}   ·   SCORE ${state.score}   ·   RINGS ${state.ringsHit}/6   ·   KILLS ${state.kills}/${KILLS_TO_CLEAR}`;
+      plate2Text.text = `FUEL ${Math.round(state.fuel)} GAL   ·   HULL ${Math.round(state.hull)}%${state.hull < 45 ? ' — DAMAGED' : ''}   ·   CAM ${camera === CAMERA.CHASE ? 'CHASE' : 'COCKPIT'} (C)`;
+    }
+    const obj = inGame ? objectivePoint(state, enemies) : null;
+    markerText.visible = Boolean(obj);
+    if (obj) {
+      markerText.text = obj.label;
+      markerText.position.set(obj.x, obj.y - 26 / Math.max(0.4, obj.scale) - 14);
     }
     valSpeed.visible = valAlt.visible = valHdg.visible = screen !== SCREEN.TITLE;
     titleText.visible = subText.visible = promptText.visible = controlsText.visible = screen === SCREEN.TITLE;
@@ -563,7 +809,7 @@ export function createRenderer(container) {
       titleText.text = 'IRON WINGS';
       subText.text = '— SKIES OF 1944 —';
       promptText.text = 'Click or press ENTER to take off';
-      controlsText.text = 'MOUSE steer · W / S throttle · SPACE fire · SHIFT war emergency power\nP pause · M mute · Thread the rings, splash three bandits, land her soft.';
+      controlsText.text = 'MOUSE steer · W / S throttle · SPACE fire · SHIFT war emergency power · C camera\nP pause · M mute · Thread the rings, splash five bandits who shoot back, land her soft.';
     }
     pauseText.visible = screen === SCREEN.PAUSED;
     pauseText.text = '— PAUSED —';
