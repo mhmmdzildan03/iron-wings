@@ -1,11 +1,13 @@
 // IRON WINGS — staged scenes for the maker's screenshots (?shot=…&seed=1).
 // Each scene sets the real flight state to a genuine moment of the sortie and
 // lets the normal renderer paint it, so a screenshot is always the game
-// itself, never a mock-up: title, the ring course over the coast, a dogfight
-// with the sight on a bandit, and the flare a breath before touchdown.
+// itself, never a mock-up. The set mixes the two cameras the game offers:
+// the title and the dogfight from inside the analogue cockpit, the ring
+// course and the landing from the chase camera with the whole fighter in
+// frame over the coast.
 
 import { PHASE, HOME_Z } from './flight.js';
-import { SCREEN, project } from './render.js';
+import { SCREEN, CAMERA, project } from './render.js';
 
 export function stageShot(name, flight, renderer) {
   const s = flight.state;
@@ -14,39 +16,55 @@ export function stageShot(name, flight, renderer) {
   s.throttle = 0.8; s.speed = 56; s.alt = 165; s.z = 320; s.x = -30;
   s.pitch = 0.04; s.roll = -0.12; s.heading = 4; s.onGround = false;
   s.phase = PHASE.RINGS; s.ringIndex = 0;
+  s.fuel = 78;
 
   if (name === 'coast') {
-    s.z = 1240; s.x = -38; s.alt = 128; s.roll = 0.1; s.pitch = -0.02;
+    // Chase camera: the whole fighter banking toward the gold ring, the
+    // coastline, village and mountains spread out below her.
+    s.z = 1240; s.x = -38; s.alt = 128; s.roll = 0.22; s.pitch = -0.02;
     s.message = 'Ring 1 of 6 — steady, steady…';
     s.messageTime = 9;
-    return SCREEN.PLAY;
+    return { screen: SCREEN.PLAY, camera: CAMERA.CHASE };
   }
   if (name === 'dogfight') {
+    // Cockpit camera in the middle of the air war: one bandit in the sight
+    // firing back, a second crossing high, flak over the harbour, and the
+    // first scars of damage on our own hull.
     s.phase = PHASE.DOGFIGHT;
     s.z = 4300; s.alt = 185; s.speed = 61; s.x = 10; s.roll = 0.16; s.pitch = 0.02;
     s.firing = true; s.shake = 0.55; s.score = 2210; s.ringsHit = 6; s.kills = 2;
-    // The bandit sits square in the reflector sight, close enough that its
-    // wingspan fills the ring — the moment every pilot remembers.
+    s.hull = 82; s.fuel = 61;
     flight.enemies.push({
       x: s.x + 2, alt: s.alt + 8, z: s.z + 175,
       vx: -14, vz: 22, hp: 2, hitFlash: 0, dead: false, smoke: 0,
+      t: 1.3, fireT: 2, muzzle: 0.14,
     });
+    flight.enemies.push({
+      x: s.x - 190, alt: s.alt + 42, z: s.z + 520,
+      vx: 18, vz: 20, hp: 3, hitFlash: 0, dead: false, smoke: 0,
+      t: 0.4, fireT: 3, muzzle: 0,
+    });
+    s.flak.push(
+      { x: s.x + 120, alt: s.alt - 30, z: s.z + 300, age: 0.12 },
+      { x: s.x - 210, alt: s.alt + 26, z: s.z + 460, age: 1.1 },
+      { x: s.x + 260, alt: s.alt + 60, z: s.z + 640, age: 0.5 },
+    );
     const p = project(s, s.x + 2, s.alt + 8, s.z + 175);
     if (p) renderer.primeExplosion(p.x + 30, p.y - 6);
-    s.message = 'Bandit in the sight — FIRE!';
+    s.message = 'Bandit in the sight — FIRE! Mind the flak!';
     s.messageTime = 9;
-    return SCREEN.PLAY;
+    return { screen: SCREEN.PLAY, camera: CAMERA.COCKPIT };
   }
   if (name === 'landing') {
+    // Chase camera on short final: the fighter flaring over the threshold,
+    // gear of sky behind her, the strip reaching up to meet her wheels.
     s.phase = PHASE.RETURN;
-    // A breath before touchdown: threshold just ahead and below the sight,
-    // nose high in the flare, the strip filling the lower glass.
-    s.z = HOME_Z - 130; s.alt = 15; s.speed = 29; s.vSpeed = -1.3;
-    s.x = 3; s.throttle = 0.32; s.pitch = 0.16; s.roll = 0.02; s.heading = 0;
-    s.score = 2890; s.ringsHit = 6; s.kills = 3;
-    s.message = 'Flare… hold her off… gently now.';
+    s.z = HOME_Z - 170; s.alt = 16; s.speed = 30; s.vSpeed = -1.2;
+    s.x = 3; s.throttle = 0.32; s.pitch = 0.15; s.roll = 0.02; s.heading = 0;
+    s.score = 2890; s.ringsHit = 6; s.kills = 5; s.fuel = 34; s.hull = 76;
+    s.message = 'Short final — hold the glide, flare at the fence.';
     s.messageTime = 9;
-    return SCREEN.PLAY;
+    return { screen: SCREEN.PLAY, camera: CAMERA.CHASE };
   }
-  return SCREEN.TITLE;
+  return { screen: SCREEN.TITLE, camera: CAMERA.COCKPIT };
 }
