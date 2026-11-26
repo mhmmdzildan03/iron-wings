@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IRON WINGS — Skies of 1944</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #191410; }
+  #stage { position: fixed; inset: 0; }
+  #stage canvas { display: block; }
+  /* Screen-reader status line: announced, never painted. */
+  #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+</style>
+</head>
+<body>
+<div id="stage" aria-label="IRON WINGS, a 1944 cockpit flight game. Steer with the mouse, W and S for throttle, Space to fire."></div>
+<p id="status" role="status" aria-live="polite"></p>
+<script src="./vendor/pixi.min.js"></script>
+<script src="./vendor/anime.min.js"></script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
