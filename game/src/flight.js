@@ -38,8 +38,8 @@ export const KILLS_TO_CLEAR = 5;
 export const HOME_Z = 9800;
 
 const GRAVITY = 9.8;
-const MAX_SPEED = 92; // m/s, about 205 mph flat out with WEP
-const STALL_SPEED = 26;
+const MAX_SPEED = 118; // m/s — a modern jet's working envelope in game scale
+const STALL_SPEED = 34;
 
 export function createFlight() {
   const state = {
@@ -54,6 +54,14 @@ export function createFlight() {
     kills: 0, hitsTaken: 0, hull: 100, fuel: 100,
     flak: [], // { x, alt, z, age } bursts hanging in the air near the coast defences
     firing: false, gunHeat: 0, shake: 0,
+    // Modern systems: a small missile load, flare cartridges, a seeker that
+    // needs a steady 1.2 s in the circle to lock, and an RWR that screams
+    // when a hostile missile is inbound. slowmo is a one-shot trigger the
+    // presenter consumes to give each confirmed kill its cinematic beat.
+    missiles: 6, flares: 12,
+    lockTarget: null, lockProgress: 0, locked: false,
+    missilesLive: [], inbound: null, inboundCooldown: 7, flareT: 0, launchT: 0,
+    slowmo: 0,
     score: 0, time: 0,
     touchdown: null, // { vSpeed, speed, lateral } once the wheels meet the strip
     message: 'Throttle up — W — and ease her off the strip.',
@@ -151,7 +159,7 @@ export function createFlight() {
     state.throttle = clamp(state.throttle + input.throttleDelta * dt, 0, 1);
     state.wep = Boolean(input.wep) && state.throttle > 0.85;
     if (!state.onGround) {
-      state.fuel = Math.max(0, state.fuel - dt * (0.22 + state.throttle * 0.4 + (state.wep ? 0.45 : 0)));
+      state.fuel = Math.max(0, state.fuel - dt * (0.22 + state.throttle * 0.4 + (state.wep ? 0.85 : 0)));
       if (state.fuel === 0 && state.messageTime <= 0) say('Tank is dry — glide her home on fumes and prayer.');
     }
     const engineHealth = state.hull < 45 ? 0.72 : 1;
@@ -179,12 +187,12 @@ export function createFlight() {
     if (state.onGround) {
       state.vSpeed = 0;
       state.alt = 0;
-      if (state.speed > 34 && state.pitch > 0.18) {
+      if (state.speed > 44 && state.pitch > 0.18) {
         state.onGround = false;
-        state.vSpeed = 2.2;
+        state.vSpeed = 2.6;
         if (state.phase === PHASE.TAKEOFF) {
           state.phase = PHASE.RINGS;
-          say('Airborne! Follow the gold rings along the coast.');
+          say('Airborne! Hit the waypoints along the coast — burners if you need them.');
         }
       }
     } else {
@@ -206,6 +214,113 @@ export function createFlight() {
     updateDogfight(dt);
     updateReturn();
     if (!state.onGround && state.phase !== PHASE.TAKEOFF) takeFire(dt);
+    updateSystems(dt, input);
+  }
+
+  /**
+   * The modern layer: seeker lock-on, live missiles both ways, and flares.
+   * Hold a bandit inside the aiming circle for ~1.2 s to lock, F to launch.
+   * When the RWR warns of an inbound missile, X throws flares to break it.
+   */
+  function updateSystems(dt, input) {
+    if (state.flareT > 0) state.flareT -= dt;
+    if (state.launchT > 0) state.launchT -= dt;
+    if (state.onGround || state.phase === PHASE.TAKEOFF) { state.lockProgress = 0; state.locked = false; state.lockTarget = null; return; }
+
+    // --- seeker lock-on (dogfight only: the radar is slaved to the fight)
+    let candidate = null;
+    if (state.phase === PHASE.DOGFIGHT) {
+      for (const e of enemies) {
+        if (e.dead) continue;
+        const rel = e.z - state.z;
+        if (rel < 110 || rel > 980) continue;
+        const offAxis = Math.abs(e.x - state.x) / rel + Math.abs(e.alt - state.alt) / rel * 1.4;
+        if (offAxis < 0.16 && (!candidate || rel < candidate.rel)) candidate = { e, rel };
+      }
+    }
+    if (candidate) {
+      if (state.lockTarget !== candidate.e) { state.lockTarget = candidate.e; state.lockProgress = Math.min(state.lockProgress, 0.25); }
+      state.lockProgress = Math.min(1, state.lockProgress + dt / 1.2);
+    } else {
+      state.lockProgress = Math.max(0, state.lockProgress - dt * 1.6);
+      if (state.lockProgress <= 0) state.lockTarget = null;
+    }
+    state.locked = state.lockProgress >= 1 && state.lockTarget && !state.lockTarget.dead;
+
+    // --- launch (F)
+    if (input.fireMissile && state.locked && state.missiles > 0) {
+      state.missiles -= 1;
+      state.launchT = 0.35;
+      state.missilesLive.push({
+        x: state.x + 14, alt: state.alt - 5, z: state.z + 12,
+        target: state.lockTarget, t: 0, trail: [],
+      });
+      state.lockProgress = 0.35;
+      state.locked = false;
+      say('Fox two! Missile away.');
+    } else if (input.fireMissile && state.phase === PHASE.DOGFIGHT && state.missiles <= 0) {
+      say('Winchester — no missiles left. Guns, guns, guns.');
+    }
+
+    // --- our missiles fly
+    for (let i = state.missilesLive.length - 1; i >= 0; i -= 1) {
+      const m = state.missilesLive[i];
+      m.t += dt;
+      m.trail.unshift({ x: m.x, alt: m.alt, z: m.z });
+      if (m.trail.length > 34) m.trail.pop();
+      const tgt = m.target;
+      if (!tgt || tgt.dead || m.t > 5) { state.missilesLive.splice(i, 1); continue; }
+      const dx = tgt.x - m.x, dy = tgt.alt - m.alt, dz = tgt.z - m.z;
+      const dist = Math.hypot(dx, dy, dz);
+      const stepLen = 165 * dt;
+      if (dist < Math.max(30, stepLen)) {
+        tgt.hp = 0; tgt.dead = true; tgt.boom = 1;
+        state.kills += 1;
+        state.score += 500;
+        state.slowmo = 0.6;
+        state.shake = Math.min(1, state.shake + 0.5);
+        state.missilesLive.splice(i, 1);
+        say(state.kills >= KILLS_TO_CLEAR ? 'Splash! That is the last of them — sky is clear.' : `Splash one! Missile kill — ${state.kills} of ${KILLS_TO_CLEAR}.`);
+        continue;
+      }
+      m.x += (dx / dist) * stepLen;
+      m.alt += (dy / dist) * stepLen;
+      m.z += (dz / dist) * stepLen;
+    }
+
+    // --- hostile missiles and the flare answer (X)
+    if (input.flare && state.flares > 0) {
+      state.flares -= 1;
+      state.flareT = 0.9;
+      if (state.inbound) {
+        state.inbound = null;
+        state.inboundCooldown = 6 + Math.random() * 4;
+        say('Flares out — their missile takes the decoys!');
+      }
+    }
+    if (state.phase === PHASE.DOGFIGHT) {
+      if (state.inbound) {
+        state.inbound.t -= dt;
+        if (state.inbound.t <= 0) {
+          state.inbound = null;
+          state.inboundCooldown = 8;
+          state.hull = Math.max(0, state.hull - (14 + Math.random() * 8));
+          state.shake = 1;
+          if (state.hull <= 0) { state.phase = PHASE.CRASHED; say('Missile hit — she is going down…'); }
+          else say('Missile hit! Airframe shuddering — check your hull.');
+        }
+      } else {
+        state.inboundCooldown -= dt;
+        const anyAlive = enemies.some((e) => !e.dead);
+        if (state.inboundCooldown <= 0 && anyAlive && state.kills < KILLS_TO_CLEAR) {
+          state.inbound = { t: 3.4 };
+          const shooter = enemies.find((e) => !e.dead);
+          if (shooter) shooter.muzzle = 0.3;
+        }
+      }
+    } else if (state.inbound) {
+      state.inbound = null;
+    }
   }
 
   function touchGround() {
@@ -302,8 +417,10 @@ export function createFlight() {
     state.score += 60;
     if (enemy.hp <= 0) {
       enemy.dead = true;
+      enemy.boom = 1;
       state.kills += 1;
       state.score += 340;
+      state.slowmo = 0.6;
       say(state.kills >= KILLS_TO_CLEAR
         ? 'That is the last of them — the sky is yours!'
         : `Splash one bandit! ${state.kills} of ${KILLS_TO_CLEAR} down — they are shooting back, mind your hull.`);
@@ -316,4 +433,5 @@ export function createFlight() {
 export function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 export function wrapDegrees(d) { const w = ((d + 180) % 360 + 360) % 360 - 180; return w; }
 export function mph(ms) { return Math.round(ms * 2.237); }
+export function knots(ms) { return Math.round(ms * 1.944); }
 export function feet(m) { return Math.round(m * 3.281); }
