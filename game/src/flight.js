@@ -18,7 +18,7 @@ export const PHASE = {
 };
 
 /** The strip sits at distance 0; the sortie flies out along +z and comes back along it. */
-export const STRIP = { length: 620, width: 34, z: 0 };
+export const STRIP = { length: 620, width: 52, z: 0 };
 
 /** Marker rings on the outbound leg: lateral offset, height, distance along the coast. */
 export const RING_COURSE = [
@@ -30,6 +30,9 @@ export const RING_COURSE = [
   { x: -40, alt: 190, z: 7600 },
 ];
 export const RING_RADIUS = 62;
+
+/** Bandits to splash before the sky is clear enough to run for home. */
+export const KILLS_TO_CLEAR = 5;
 
 /** Where the home strip waits on the return leg, in the same world frame. */
 export const HOME_Z = 9800;
@@ -48,7 +51,8 @@ export function createFlight() {
     throttle: 0, wep: false,
     onGround: true, gearDown: true,
     ringsHit: 0, ringIndex: 0, ringFlash: 0,
-    kills: 0, hitsTaken: 0, hull: 100,
+    kills: 0, hitsTaken: 0, hull: 100, fuel: 100,
+    flak: [], // { x, alt, z, age } bursts hanging in the air near the coast defences
     firing: false, gunHeat: 0, shake: 0,
     score: 0, time: 0,
     touchdown: null, // { vSpeed, speed, lateral } once the wheels meet the strip
@@ -59,6 +63,7 @@ export function createFlight() {
   const enemies = [];
   let enemyTimer = 4;
   let dogfightClock = 0;
+  let flakTimer = 2.2;
 
   function say(text, seconds = 5) {
     state.message = text;
@@ -66,17 +71,71 @@ export function createFlight() {
   }
 
   function spawnEnemy() {
-    // Patrol machines cross ahead of the player, drifting across the nose so a
-    // steady hand can track them through the sight.
+    // Patrol machines cross ahead of the player, weaving as they come, so a
+    // steady hand has to lead them through the sight — and they shoot back.
     const side = enemies.length % 2 === 0 ? -1 : 1;
     enemies.push({
-      x: state.x + side * (260 + Math.random() * 120),
-      alt: state.alt + 18 - Math.random() * 30,
-      z: state.z + 620 + Math.random() * 160,
-      vx: -side * (16 + Math.random() * 7),
+      x: state.x + side * (240 + Math.random() * 130),
+      alt: state.alt + 20 - Math.random() * 34,
+      z: state.z + 640 + Math.random() * 180,
+      vx: -side * (17 + Math.random() * 8),
       vz: state.speed * 0.42,
       hp: 3, hitFlash: 0, dead: false, smoke: 0,
+      t: Math.random() * 6, fireT: 1.2 + Math.random() * 1.6, muzzle: 0,
     });
+  }
+
+  /** Enemy fire and coastal flak: the war shoots back, and the hull keeps count. */
+  function takeFire(dt) {
+    for (const e of enemies) {
+      if (e.dead) continue;
+      if (e.muzzle > 0) e.muzzle -= dt;
+      e.fireT -= dt;
+      const rel = e.z - state.z;
+      const aligned = Math.abs(e.x - state.x) < 95 && Math.abs(e.alt - state.alt) < 62;
+      if (e.fireT <= 0 && rel > 110 && rel < 680 && aligned) {
+        e.fireT = 1.5 + Math.random() * 1.4;
+        e.muzzle = 0.14;
+        if (Math.random() < 0.55) {
+          const dmg = 4 + Math.random() * 6;
+          state.hull = Math.max(0, state.hull - dmg);
+          state.hitsTaken += 1;
+          state.shake = Math.min(1, state.shake + 0.55);
+          if (state.hull <= 0) {
+            state.phase = PHASE.CRASHED;
+            say('Shot down in flames — the sea takes another…');
+            return;
+          }
+          if (state.hull < 45) say('She is hit hard — smoke in the cockpit! Break off for home soon.');
+          else say('Taking fire! Jink, pilot, jink!');
+        }
+      }
+    }
+    // Flak from the harbour guns, in both the fight and the run home.
+    if (state.phase === PHASE.DOGFIGHT || state.phase === PHASE.RETURN) {
+      flakTimer -= dt;
+      if (flakTimer <= 0) {
+        flakTimer = 2.4 + Math.random() * 1.4;
+        const burst = {
+          x: state.x + (Math.random() - 0.5) * 300,
+          alt: state.alt + (Math.random() - 0.5) * 110,
+          z: state.z + 180 + Math.random() * 420,
+          age: 0,
+        };
+        state.flak.push(burst);
+        const near = Math.hypot(burst.x - state.x, burst.alt - state.alt, (burst.z - state.z) * 0.4);
+        if (near < 95) {
+          state.hull = Math.max(0, state.hull - (3 + Math.random() * 5));
+          state.shake = Math.min(1, state.shake + 0.5);
+          if (state.hull <= 0) { state.phase = PHASE.CRASHED; say('Flak got her — down she goes…'); return; }
+          say('Flak — close enough to hear it crack.');
+        }
+      }
+    }
+    for (let i = state.flak.length - 1; i >= 0; i -= 1) {
+      state.flak[i].age += dt;
+      if (state.flak[i].age > 2.6) state.flak.splice(i, 1);
+    }
   }
 
   /** Advance the whole sortie by dt seconds. input: {pitch, roll, throttleDelta, fire, wep}. */
@@ -87,10 +146,17 @@ export function createFlight() {
     if (state.ringFlash > 0) state.ringFlash -= dt;
     if (state.shake > 0) state.shake = Math.max(0, state.shake - dt * 2.4);
 
-    // Throttle and emergency power.
+    // Throttle and emergency power. Fuel burns faster the harder she works;
+    // an empty tank means gliding, and a shot-up engine gives less than full.
     state.throttle = clamp(state.throttle + input.throttleDelta * dt, 0, 1);
     state.wep = Boolean(input.wep) && state.throttle > 0.85;
-    const power = state.throttle * (state.wep ? 1.35 : 1);
+    if (!state.onGround) {
+      state.fuel = Math.max(0, state.fuel - dt * (0.22 + state.throttle * 0.4 + (state.wep ? 0.45 : 0)));
+      if (state.fuel === 0 && state.messageTime <= 0) say('Tank is dry — glide her home on fumes and prayer.');
+    }
+    const engineHealth = state.hull < 45 ? 0.72 : 1;
+    const power = state.fuel > 0 ? state.throttle * (state.wep ? 1.35 : 1) * engineHealth : 0;
+    if (state.hull < 30 && !state.onGround) state.shake = Math.max(state.shake, 0.16);
 
     // Attitude follows the stick (the mouse) with a little weight to it.
     const targetPitch = input.pitch; // -1 nose down .. 1 nose up
@@ -139,6 +205,7 @@ export function createFlight() {
     updateRings();
     updateDogfight(dt);
     updateReturn();
+    if (!state.onGround && state.phase !== PHASE.TAKEOFF) takeFire(dt);
   }
 
   function touchGround() {
@@ -193,13 +260,16 @@ export function createFlight() {
     if (state.phase !== PHASE.DOGFIGHT) return;
     dogfightClock += dt;
     enemyTimer -= dt;
-    if (enemyTimer <= 0 && enemies.length < 3 && state.kills < 3) {
+    if (enemyTimer <= 0 && enemies.length < 3 && state.kills < KILLS_TO_CLEAR) {
       spawnEnemy();
-      enemyTimer = 5.5;
+      enemyTimer = 4.2;
     }
     for (const e of enemies) {
-      if (e.dead) { e.alt -= 26 * dt; e.z += e.vz * dt; e.smoke += dt; continue; }
-      e.x += e.vx * dt;
+      e.t += dt;
+      if (e.dead) { e.alt -= 30 * dt; e.z += e.vz * dt; e.smoke += dt; continue; }
+      // A weave on top of the crossing run: they do not fly parade-straight.
+      e.x += (e.vx + Math.sin(e.t * 1.7) * 11) * dt;
+      e.alt += Math.sin(e.t * 2.3) * 5.5 * dt;
       e.z += e.vz * dt;
       if (e.hitFlash > 0) e.hitFlash -= dt;
     }
@@ -207,7 +277,7 @@ export function createFlight() {
     for (let i = enemies.length - 1; i >= 0; i -= 1) {
       if (enemies[i].z < state.z - 260 || enemies[i].alt < -40) enemies.splice(i, 1);
     }
-    if (state.kills >= 3 || dogfightClock > 75) {
+    if (state.kills >= KILLS_TO_CLEAR || dogfightClock > 120) {
       state.phase = PHASE.RETURN;
       enemies.length = 0;
       say('Sky is clear. Turn for home — the strip is behind you, follow the coast back.');
@@ -234,7 +304,9 @@ export function createFlight() {
       enemy.dead = true;
       state.kills += 1;
       state.score += 340;
-      say(state.kills >= 3 ? 'That is the third — the sky is yours!' : `Splash one bandit! ${state.kills} down.`);
+      say(state.kills >= KILLS_TO_CLEAR
+        ? 'That is the last of them — the sky is yours!'
+        : `Splash one bandit! ${state.kills} of ${KILLS_TO_CLEAR} down — they are shooting back, mind your hull.`);
     }
   }
 
