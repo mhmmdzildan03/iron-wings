@@ -39,10 +39,14 @@ if (shotName) {
 }
 
 function runGame() {
-  let flight = createFlight();
+  let flight = createFlight(); prevKills = 0; prevMissiles = 6; slowmoTimer = 0;
   let screen = SCREEN.TITLE;
   let camera = CAMERA.COCKPIT;
+  let slowmoTimer = 0;
+  let prevKills = 0;
+  let prevMissiles = 6;
   const keys = new Set();
+  const pressed = new Set(); // edge-triggered, consumed by readInput
   const mouse = { nx: 0.5, ny: 0.5, down: false };
   let hitClock = 0;
 
@@ -80,7 +84,7 @@ function runGame() {
         window.anime({ targets: view, scale: [1.045, 1], duration: 900, easing: 'easeOutQuad' });
       }
     } else if (screen === SCREEN.OVER) {
-      flight = createFlight();
+      flight = createFlight(); prevKills = 0; prevMissiles = 6; slowmoTimer = 0;
       screen = SCREEN.PLAY;
       status.textContent = 'A fresh sortie. Good luck, pilot.';
     }
@@ -93,6 +97,8 @@ function runGame() {
       throttleDelta: (keys.has('KeyW') ? 0.55 : 0) - (keys.has('KeyS') ? 0.7 : 0),
       fire: keys.has('Space') || mouse.down,
       wep: keys.has('ShiftLeft') || keys.has('ShiftRight'),
+      fireMissile: pressed.has('KeyF'),
+      flare: pressed.has('KeyX'),
     };
   }
 
@@ -106,8 +112,15 @@ function runGame() {
     last = now;
     if (dt > 0.25) dt = 0.25;
     if (screen === SCREEN.PLAY) {
-      accumulator += dt;
+      accumulator += slowmoTimer > 0 ? dt * 0.35 : dt;
       const input = readInput();
+      pressed.clear();
+      // Cinematic beat: a confirmed kill slows the world for ~0.6 s.
+      if (flight.state.slowmo > 0 && slowmoTimer <= 0) {
+        slowmoTimer = flight.state.slowmo;
+        flight.state.slowmo = 0;
+      }
+      if (slowmoTimer > 0) slowmoTimer -= dt;
       while (accumulator >= STEP) {
         flight.step(STEP, input);
         accumulator -= STEP;
@@ -132,8 +145,13 @@ function runGame() {
         }
       }
     }
+    if (flight.state.kills > prevKills) { prevKills = flight.state.kills; audio.explosion(); }
+    if (flight.state.missiles < prevMissiles) { prevMissiles = flight.state.missiles; audio.launch(); }
     renderer.draw(flight.state, flight.enemies, screen, dt, now / 1000, camera);
-    audio.update(flight.state.throttle, flight.state.speed * 2.237, flight.state.firing && screen === SCREEN.PLAY);
+    audio.update(flight.state.throttle, flight.state.speed * 2.237, flight.state.firing && screen === SCREEN.PLAY, {
+      wep: flight.state.wep, lockProgress: screen === SCREEN.PLAY ? flight.state.lockProgress : 0,
+      locked: flight.state.locked, inbound: Boolean(flight.state.inbound),
+    });
   }
   requestAnimationFrame(frame);
 }
