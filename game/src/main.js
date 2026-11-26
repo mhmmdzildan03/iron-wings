@@ -10,7 +10,7 @@
 // of the sortie for a screenshot and sets window.__shotReady when painted.
 
 import { createFlight, PHASE } from './flight.js';
-import { createRenderer, SCREEN, project } from './render.js';
+import { createRenderer, SCREEN, CAMERA, project } from './render.js';
 import { createAudio } from './audio.js';
 import { stageShot } from './shots.js';
 
@@ -25,10 +25,10 @@ const audio = createAudio();
 
 if (shotName) {
   const flight = createFlight();
-  const screen = stageShot(shotName, flight, renderer);
+  const staged = stageShot(shotName, flight, renderer);
   let painted = 0;
   const paint = () => {
-    renderer.draw(flight.state, flight.enemies, screen, 0.016, 2.4);
+    renderer.draw(flight.state, flight.enemies, staged.screen, 0.016, 2.4, staged.camera);
     painted += 1;
     if (painted < 3) requestAnimationFrame(paint);
     else window.__shotReady = true;
@@ -41,6 +41,7 @@ if (shotName) {
 function runGame() {
   let flight = createFlight();
   let screen = SCREEN.TITLE;
+  let camera = CAMERA.COCKPIT;
   const keys = new Set();
   const mouse = { nx: 0.5, ny: 0.5, down: false };
   let hitClock = 0;
@@ -60,6 +61,10 @@ function runGame() {
     if (ev.code === 'KeyM') {
       const muted = audio.toggleMute();
       status.textContent = muted ? 'Sound off.' : 'Sound on.';
+    }
+    if (ev.code === 'KeyC' && screen !== SCREEN.TITLE) {
+      camera = camera === CAMERA.COCKPIT ? CAMERA.CHASE : CAMERA.COCKPIT;
+      status.textContent = camera === CAMERA.CHASE ? 'Chase camera: the whole aircraft in frame.' : 'Cockpit camera.';
     }
   });
   window.addEventListener('keyup', (ev) => keys.delete(ev.code));
@@ -127,7 +132,7 @@ function runGame() {
         }
       }
     }
-    renderer.draw(flight.state, flight.enemies, screen, dt, now / 1000);
+    renderer.draw(flight.state, flight.enemies, screen, dt, now / 1000, camera);
     audio.update(flight.state.throttle, flight.state.speed * 2.237, flight.state.firing && screen === SCREEN.PLAY);
   }
   requestAnimationFrame(frame);
